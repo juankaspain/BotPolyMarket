@@ -1,0 +1,166 @@
+# =====================================
+# GitHub Actions CI/CD Workflow
+# =====================================
+# Workflow para tests automáticos del BotPolyMarket
+
+name: CI - Tests y Validación
+
+# Trigger: cuando se hace push o pull request a main
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Permite ejecución manual
+
+jobs:
+  # Job 1: Linting y formato
+  lint:
+    name: Linting y Formato
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Instalar dependencias de desarrollo
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort
+    
+    - name: Ejecutar Black (formato)
+      run: black --check .
+      continue-on-error: true
+    
+    - name: Ejecutar isort (imports)
+      run: isort --check-only .
+      continue-on-error: true
+    
+    - name: Ejecutar Flake8 (linting)
+      run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  # Job 2: Tests unitarios
+  test:
+    name: Tests Unitarios
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-mock
+    
+    - name: Ejecutar tests con pytest
+      run: |
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+      continue-on-error: true
+
+  # Job 3: Verificación de seguridad
+  security:
+    name: Análisis de Seguridad
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Instalar dependencias de seguridad
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+    
+    - name: Verificar vulnerabilidades en dependencias
+      run: safety check --json
+      continue-on-error: true
+    
+    - name: Análisis de seguridad con Bandit
+      run: bandit -r . -f json
+      continue-on-error: true
+
+  # Job 4: Build de Docker
+  docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: botpolymarket:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Test Docker image
+      run: |
+        docker run --rm botpolymarket:latest python -c "import sys; print(sys.version)"
+
+  # Job 5: Notificación de estado
+  notify:
+    name: Notificar Resultado
+    runs-on: ubuntu-latest
+    needs: [lint, test, security, docker]
+    if: always()
+    
+    steps:
+    - name: Resultado del workflow
+      run: |
+        echo "Workflow completado"
+        echo "Lint: ${{ needs.lint.result }}"
+        echo "Tests: ${{ needs.test.result }}"
+        echo "Security: ${{ needs.security.result }}"
+        echo "Docker: ${{ needs.docker.result }}"
+
+# =====================================
+# NOTAS:
+# =====================================
+# - Este workflow se ejecuta en cada push a main/develop
+# - Ejecuta linting, tests, análisis de seguridad y build de Docker
+# - Los tests se ejecutan en Python 3.10, 3.11 y 3.12
+# - El build de Docker solo se ejecuta en push a main
+# - Puedes ejecutarlo manualmente desde la pestaña Actions
+# =====================================
