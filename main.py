@@ -5,107 +5,331 @@ Autor: juankaspain
 Descripción: Monitoriza y replica trades de traders exitosos en Polymarket
 """
 
-import requests
+import os
+import sys
 import time
 import json
+import logging
 from datetime import datetime
+from typing import Dict, List, Optional, Set
+from dotenv import load_dotenv
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# Configuración
-TRADER_ADDRESS = ""  # PEGAR AQUÍ LA DIRECCIÓN DEL TRADER kch123
-YOUR_CAPITAL = 1000  # Tu capital en USD
-POLLING_INTERVAL = 30  # Segundos entre cada verificación
-MODE = "monitor"  # monitor | execute
+# Cargar variables de entorno
+load_dotenv()
 
-print("""  
-╔══════════════════════════════════════════════════════════╗
-║     BOT DE COPY TRADING - POLYMARKET                     ║
-║     Monitoriza traders exitosos automáticamente          ║
-╚══════════════════════════════════════════════════════════╝
-""")
+# ============================================================================
+# CONFIGURACIÓN Y CONSTANTES
+# ============================================================================
 
-if not TRADER_ADDRESS:
-    print("❌ ERROR: Debes configurar TRADER_ADDRESS")
-    print("   Edita main.py y pega la dirección wallet del trader")
-    exit(1)
-
-print(f"🎯 Trader objetivo: {TRADER_ADDRESS}")
-print(f"💰 Capital: ${YOUR_CAPITAL:,.2f}")
-print(f"⏱️  Intervalo: {POLLING_INTERVAL}s")
-print(f"🔧 Modo: {MODE.upper()}")
-print("─" * 60)
-
-previous_positions = {}
-iteration = 0
-
-while True:
-    try:
-        iteration += 1
-        print(f"\n🔄 Iteración #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+class Config:
+    """Configuración centralizada del bot"""
+    
+    # Variables de entorno requeridas
+    TRADER_ADDRESS: str = os.getenv('TRADER_ADDRESS', '')
+    YOUR_CAPITAL: float = float(os.getenv('YOUR_CAPITAL', '1000'))
+    POLLING_INTERVAL: int = int(os.getenv('POLLING_INTERVAL', '30'))
+    MODE: str = os.getenv('MODE', 'monitor')  # monitor | execute
+    
+    # API de Polymarket
+    POLYMARKET_API_BASE: str = 'https://data-api.polymarket.com'
+    SIZE_THRESHOLD: int = int(os.getenv('SIZE_THRESHOLD', '100'))
+    POSITION_LIMIT: int = int(os.getenv('POSITION_LIMIT', '50'))
+    
+    # Timeouts y reintentos
+    REQUEST_TIMEOUT: int = 10
+    MAX_RETRIES: int = 3
+    BACKOFF_FACTOR: float = 0.5
+    
+    # Logging
+    LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_FILE: str = os.getenv('LOG_FILE', 'bot_polymarket.log')
+    
+    @classmethod
+    def validate(cls) -> bool:
+        """Valida que la configuración sea correcta"""
+        errors = []
         
-        # Obtener posiciones actuales del trader
-        url = f"https://data-api.polymarket.com/positions"
+        if not cls.TRADER_ADDRESS:
+            errors.append("TRADER_ADDRESS no está configurada")
+        
+        if cls.YOUR_CAPITAL <= 0:
+            errors.append(f"YOUR_CAPITAL debe ser mayor a 0 (actual: {cls.YOUR_CAPITAL})")
+        
+        if cls.POLLING_INTERVAL < 10:
+            errors.append(f"POLLING_INTERVAL debe ser al menos 10 segundos (actual: {cls.POLLING_INTERVAL})")
+        
+        if cls.MODE not in ['monitor', 'execute']:
+            errors.append(f"MODE debe ser 'monitor' o 'execute' (actual: {cls.MODE})")
+        
+        if errors:
+            for error in errors:
+                logging.error(f"❌ Error de configuración: {error}")
+            return False
+        
+        return True
+
+
+# ============================================================================
+# CONFIGURACIÓN DE LOGGING
+# ============================================================================
+
+def setup_logging():
+    """Configura el sistema de logging"""
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # Configurar logging a archivo y consola
+    logging.basicConfig(
+        level=getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO),
+        format=log_format,
+        datefmt=date_format,
+        handlers=[
+            logging.FileHandler(Config.LOG_FILE, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    # Reducir verbosidad de librerías externas
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    logging.getLogger('requests').setLevel(logging.WARNING)
+
+
+# ============================================================================
+# CLIENTE HTTP CON REINTENTOS
+# ============================================================================
+
+class PolymarketClient:
+    """Cliente HTTP con manejo robusto de errores y reintentos"""
+    
+    def __init__(self):
+        self.session = requests.Session()
+        
+        # Configurar estrategia de reintentos
+        retry_strategy = Retry(
+            total=Config.MAX_RETRIES,
+            backoff_factor=Config.BACKOFF_FACTOR,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"]
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+        
+        self.logger = logging.getLogger(__name__)
+    
+    def get_positions(self, user_address: str) -> Optional[List[Dict]]:
+        """Obtiene las posiciones activas de un trader"""
+        url = f"{Config.POLYMARKET_API_BASE}/positions"
         params = {
-            'user': TRADER_ADDRESS,
-            'sizeThreshold': 100,
-            'limit': 50
+            'user': user_address,
+            'sizeThreshold': Config.SIZE_THRESHOLD,
+            'limit': Config.POSITION_LIMIT
         }
         
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        current_positions = response.json()
-        
-        print(f"📊 Posiciones activas: {len(current_positions)}")
-        
-        if current_positions:
-            # Mostrar top 5 posiciones por valor
-            print("\n🏆 Top 5 posiciones por valor:")
-            sorted_pos = sorted(current_positions, key=lambda x: x.get('currentValue', 0), reverse=True)[:5]
+        try:
+            response = self.session.get(
+                url,
+                params=params,
+                timeout=Config.REQUEST_TIMEOUT
+            )
+            response.raise_for_status()
+            return response.json()
             
-            for i, pos in enumerate(sorted_pos, 1):
-                title = pos.get('title', 'Sin título')[:50]
-                value = pos.get('currentValue', 0)
-                pnl_pct = pos.get('percentPnl', 0)
-                outcome = pos.get('outcome', 'N/A')
+        except requests.exceptions.Timeout:
+            self.logger.error(f"⏱️ Timeout al obtener posiciones (>{Config.REQUEST_TIMEOUT}s)")
+        except requests.exceptions.ConnectionError:
+            self.logger.error("🔌 Error de conexión con la API de Polymarket")
+        except requests.exceptions.HTTPError as e:
+            self.logger.error(f"🚫 Error HTTP {e.response.status_code}: {e}")
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"❌ Error en la petición: {e}")
+        except json.JSONDecodeError:
+            self.logger.error("📋 Error al decodificar la respuesta JSON")
+        
+        return None
+
+
+# ============================================================================
+# LÓGICA PRINCIPAL DEL BOT
+# ============================================================================
+
+class CopyTradingBot:
+    """Bot de copy trading para Polymarket"""
+    
+    def __init__(self):
+        self.client = PolymarketClient()
+        self.logger = logging.getLogger(__name__)
+        self.previous_positions: Dict[str, str] = {}
+        self.iteration: int = 0
+    
+    def display_banner(self):
+        """Muestra el banner inicial del bot"""
+        banner = """
+╔══════════════════════════════════════════════════════════╗
+║       BOT DE COPY TRADING - POLYMARKET                   ║
+║       Monitoriza traders exitosos automáticamente        ║
+╚══════════════════════════════════════════════════════════╝
+        """
+        print(banner)
+        self.logger.info(f"🎯 Trader objetivo: {Config.TRADER_ADDRESS}")
+        self.logger.info(f"💰 Capital: ${Config.YOUR_CAPITAL:,.2f}")
+        self.logger.info(f"⏱️ Intervalo: {Config.POLLING_INTERVAL}s")
+        self.logger.info(f"🔧 Modo: {Config.MODE.upper()}")
+        self.logger.info("─" * 60)
+    
+    def display_top_positions(self, positions: List[Dict], limit: int = 5):
+        """Muestra las mejores posiciones por valor"""
+        if not positions:
+            return
+        
+        sorted_positions = sorted(
+            positions,
+            key=lambda x: x.get('currentValue', 0),
+            reverse=True
+        )[:limit]
+        
+        self.logger.info(f"\n🏆 Top {limit} posiciones por valor:")
+        
+        for i, pos in enumerate(sorted_positions, 1):
+            title = pos.get('title', 'Sin título')[:50]
+            value = pos.get('currentValue', 0)
+            pnl_pct = pos.get('percentPnl', 0)
+            outcome = pos.get('outcome', 'N/A')
+            
+            pnl_emoji = "📈" if pnl_pct > 0 else "📉" if pnl_pct < 0 else "➖"
+            
+            self.logger.info(f"{pnl_emoji} {i}. {title}")
+            self.logger.info(f"   └─ {outcome} | ${value:.2f} | PnL: {pnl_pct:.2f}%")
+    
+    def detect_new_positions(self, current_positions: List[Dict]) -> Set[str]:
+        """Detecta nuevas posiciones comparando con el estado anterior"""
+        current_keys = {
+            f"{p.get('conditionId')}_{p.get('outcome')}"
+            for p in current_positions
+        }
+        previous_keys = set(self.previous_positions.keys())
+        
+        return current_keys - previous_keys
+    
+    def process_new_positions(self, new_positions: Set[str], current_positions: List[Dict]):
+        """Procesa las nuevas posiciones detectadas"""
+        if not new_positions:
+            return
+        
+        self.logger.info(f"\n🆕 Detectadas {len(new_positions)} NUEVAS posiciones:")
+        
+        for key in new_positions:
+            for pos in current_positions:
+                if f"{pos.get('conditionId')}_{pos.get('outcome')}" == key:
+                    title = pos.get('title', 'Sin título')
+                    outcome = pos.get('outcome', 'N/A')
+                    avg_price = pos.get('avgPrice', 0)
+                    size = pos.get('size', 0)
+                    initial_value = pos.get('initialValue', 0)
+                    
+                    self.logger.info(f"   📌 {title}")
+                    self.logger.info(f"      └─ {outcome} @ ${avg_price:.2f}")
+                    self.logger.info(f"      └─ Tamaño: {size:.0f} shares (${initial_value:.2f})")
+                    
+                    if Config.MODE == "execute":
+                        self.logger.warning("      └─ ⚠️ MODO EXECUTE no implementado (requiere wallet)")
+                    else:
+                        self.logger.info("      └─ ℹ️ Modo MONITOR - No se ejecuta trade")
+    
+    def update_position_tracking(self, current_positions: List[Dict]):
+        """Actualiza el tracking de posiciones"""
+        self.previous_positions = {
+            f"{p.get('conditionId')}_{p.get('outcome')}": p.get('outcome')
+            for p in current_positions
+        }
+    
+    def run_iteration(self):
+        """Ejecuta una iteración del bot"""
+        self.iteration += 1
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        self.logger.info(f"\n🔄 Iteración #{self.iteration} - {timestamp}")
+        
+        # Obtener posiciones actuales
+        current_positions = self.client.get_positions(Config.TRADER_ADDRESS)
+        
+        if current_positions is None:
+            self.logger.warning("⚠️ No se pudieron obtener las posiciones")
+            return
+        
+        self.logger.info(f"📊 Posiciones activas: {len(current_positions)}")
+        
+        if not current_positions:
+            self.logger.info("⚠️ No se encontraron posiciones activas")
+            return
+        
+        # Mostrar top posiciones
+        self.display_top_positions(current_positions)
+        
+        # Detectar nuevas posiciones
+        new_positions = self.detect_new_positions(current_positions)
+        
+        # Procesar nuevas posiciones
+        self.process_new_positions(new_positions, current_positions)
+        
+        # Actualizar tracking
+        self.update_position_tracking(current_positions)
+    
+    def run(self):
+        """Loop principal del bot"""
+        self.display_banner()
+        
+        try:
+            while True:
+                try:
+                    self.run_iteration()
+                    
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    self.logger.error(f"❌ Error en iteración #{self.iteration}: {e}", exc_info=True)
                 
-                pnl_emoji = "📈" if pnl_pct > 0 else "📉" if pnl_pct < 0 else "➖"
-                print(f"{pnl_emoji} {i}. {title}")
-                print(f"   └─ {outcome} | ${value:,.2f} | PnL: {pnl_pct:+.2f}%")
-            
-            # Detectar nuevas posiciones
-            current_keys = {f"{p['conditionId']}_{p['outcome']}" for p in current_positions}
-            previous_keys = set(previous_positions.keys())
-            
-            new_positions = current_keys - previous_keys
-            
-            if new_positions:
-                print(f"\n🆕 Detectadas {len(new_positions)} NUEVAS posiciones:")
-                for key in new_positions:
-                    for pos in current_positions:
-                        if f"{pos['conditionId']}_{pos['outcome']}" == key:
-                            print(f"   ✨ {pos['title']}")
-                            print(f"      └─ {pos['outcome']} @ {pos['avgPrice']:.2f}¢")
-                            print(f"      └─ Tamaño: {pos['size']:,.0f} shares (${pos['initialValue']:,.2f})")
-                            
-                            if MODE == "execute":
-                                print("      └─ ⚠️  MODO EXECUTE no implementado (requiere wallet)")
-                            else:
-                                print("      └─ ℹ️  Modo MONITOR - No se ejecuta trade")
-            
-            # Actualizar posiciones anteriores
-            previous_positions = {f"{p['conditionId']}_{p['outcome']}": p for p in current_positions}
+                # Esperar antes de la siguiente iteración
+                self.logger.info(f"\n⏳ Esperando {Config.POLLING_INTERVAL} segundos...")
+                time.sleep(Config.POLLING_INTERVAL)
         
-        else:
-            print("⚠️  No se encontraron posiciones activas")
+        except KeyboardInterrupt:
+            self.logger.info("\n\n🛑 Bot detenido por el usuario")
+        except Exception as e:
+            self.logger.critical(f"💥 Error crítico: {e}", exc_info=True)
+            sys.exit(1)
+
+
+# ============================================================================
+# PUNTO DE ENTRADA
+# ============================================================================
+
+def main():
+    """Función principal"""
+    # Configurar logging
+    setup_logging()
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Validar configuración
+        if not Config.validate():
+            logger.error("\n❌ Configuración inválida. Por favor, revisa tu archivo .env")
+            logger.info("\n💡 Copia .env.example a .env y configura las variables necesarias")
+            sys.exit(1)
         
-        print(f"\n⏳ Esperando {POLLING_INTERVAL} segundos...")
-        time.sleep(POLLING_INTERVAL)
-        
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Error de red: {e}")
-        time.sleep(60)
-    except KeyboardInterrupt:
-        print("\n\n👋 Bot detenido por el usuario")
-        break
+        # Iniciar bot
+        bot = CopyTradingBot()
+        bot.run()
+    
     except Exception as e:
-        print(f"❌ Error inesperado: {e}")
-        time.sleep(60)
+        logger.critical(f"💥 Error fatal al iniciar el bot: {e}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
