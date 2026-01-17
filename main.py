@@ -23,6 +23,7 @@ try:
         from core.wallet_manager import WalletManager
         from core.trade_executor import TradeExecutor
         from core.risk_manager import RiskManager, RiskProfiles
+                from core.bot_manager import BotManager
 except ImportError as e:
     logging.warning(f"Execute mode modules not available: {e}")
 
@@ -593,6 +594,25 @@ def main():
             sys.exit(1)
 
                 # Seleccionar perfil de riesgo interactivamente
+
+            # Verificar si usar menú interactivo
+    use_interactive_menu = os.getenv('USE_INTERACTIVE_MENU', 'false').lower() == 'true'
+    
+    if Config.MODE == 'execute' and use_interactive_menu:
+        logger.info("Iniciando bot en modo Execute con menú interactivo")
+        
+        # Crear configuración para BotManager
+        bot_config = {
+            'api_key': Config.TRADER_ADDRESS,  # Ajustar según necesidades reales
+            'database_path': 'bot_polymarket.db',
+            'wallet_address': Config.TRADER_ADDRESS,
+            'private_key': os.getenv('PRIVATE_KEY', ''),
+        }
+        
+        # Inicializar y ejecutar BotManager con menú
+        bot_manager = BotManager(bot_config)
+        bot_manager.start()
+        return
         if Config.MODE == 'execute':
             selected_profile = select_risk_profile()
             risk_profile = RiskProfiles.get_profile(selected_profile)
