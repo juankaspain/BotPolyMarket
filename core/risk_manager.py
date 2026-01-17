@@ -359,3 +359,89 @@ class RiskManager:
         self.daily_pnl = 0.0
         self.daily_trades = 0
         logger.info("Daily stats reset")
+
+
+
+# ================================================================================
+# PERFILES DE RIESGO PREDEFINIDOS
+# ================================================================================
+
+class RiskProfiles:
+    """
+    Perfiles de riesgo predefinidos para diferentes estrategias de trading
+    """
+    
+    @staticmethod
+    def get_profile(profile_name: str) -> RiskLimits:
+        """
+        Obtiene un perfil de riesgo predefinido
+        
+        Args:
+            profile_name: Nombre del perfil (muy_agresiva, agresiva, neutral, poco_agresiva, no_agresiva)
+            
+        Returns:
+            RiskLimits: Configuración de límites de riesgo
+        """
+        profiles = {
+            'muy_agresiva': RiskLimits(
+                max_position_size=0.15,          # 15% del capital por posición
+                max_daily_loss=0.05,             # 5% pérdida máxima diaria
+                max_drawdown=0.15,               # 15% drawdown máximo
+                max_positions_total=15,          # Hasta 15 posiciones simultáneas
+                max_positions_per_strategy=8,    # 8 posiciones por estrategia
+                max_capital_per_strategy=0.40,   # 40% del capital por estrategia
+                max_correlation=0.8,             # Alta correlación permitida
+                stop_loss_pct=0.15,              # 15% stop-loss
+                take_profit_pct=0.30             # 30% take-profit
+            ),
+            'agresiva': RiskLimits(
+                max_position_size=0.10,          # 10% del capital por posición
+                max_daily_loss=0.04,             # 4% pérdida máxima diaria
+                max_drawdown=0.12,               # 12% drawdown máximo
+                max_positions_total=12,          # Hasta 12 posiciones simultáneas
+                max_positions_per_strategy=6,    # 6 posiciones por estrategia
+                max_capital_per_strategy=0.30,   # 30% del capital por estrategia
+                max_correlation=0.75,            # Correlación moderada-alta
+                stop_loss_pct=0.12,              # 12% stop-loss
+                take_profit_pct=0.25             # 25% take-profit
+            ),
+            'neutral': RiskLimits(
+                max_position_size=0.05,          # 5% del capital por posición (valor por defecto)
+                max_daily_loss=0.02,             # 2% pérdida máxima diaria
+                max_drawdown=0.10,               # 10% drawdown máximo
+                max_positions_total=10,          # Hasta 10 posiciones simultáneas
+                max_positions_per_strategy=5,    # 5 posiciones por estrategia
+                max_capital_per_strategy=0.20,   # 20% del capital por estrategia
+                max_correlation=0.70,            # Correlación máxima entre posiciones
+                stop_loss_pct=0.10,              # 10% stop-loss
+                take_profit_pct=0.20             # 20% take-profit
+            ),
+            'poco_agresiva': RiskLimits(
+                max_position_size=0.03,          # 3% del capital por posición
+                max_daily_loss=0.015,            # 1.5% pérdida máxima diaria
+                max_drawdown=0.08,               # 8% drawdown máximo
+                max_positions_total=8,           # Hasta 8 posiciones simultáneas
+                max_positions_per_strategy=4,    # 4 posiciones por estrategia
+                max_capital_per_strategy=0.15,   # 15% del capital por estrategia
+                max_correlation=0.65,            # Correlación baja-moderada
+                stop_loss_pct=0.08,              # 8% stop-loss
+                take_profit_pct=0.15             # 15% take-profit
+            ),
+            'no_agresiva': RiskLimits(
+                max_position_size=0.02,          # 2% del capital por posición
+                max_daily_loss=0.01,             # 1% pérdida máxima diaria
+                max_drawdown=0.05,               # 5% drawdown máximo
+                max_positions_total=5,           # Hasta 5 posiciones simultáneas
+                max_positions_per_strategy=3,    # 3 posiciones por estrategia
+                max_capital_per_strategy=0.10,   # 10% del capital por estrategia
+                max_correlation=0.60,            # Baja correlación
+                stop_loss_pct=0.05,              # 5% stop-loss
+                take_profit_pct=0.10             # 10% take-profit
+            )
+        }
+        
+        if profile_name not in profiles:
+            logger.warning(f"⚠️ Perfil '{profile_name}' no encontrado. Usando perfil 'neutral' por defecto")
+            return profiles['neutral']
+        
+        return profiles[profile_name]
