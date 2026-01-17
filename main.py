@@ -107,15 +107,22 @@ def select_gap_strategy() -> Optional[str]:
     print("  8. 🔗 Gap de Correlación (BTC/ETH)      - 61% WR | R:R 1:3.2")
     print("  9. 📢 Gap por Catálisis/Noticias       - 72% WR | R:R 1:2.5")
     print(" 10. 🎯 Arbitraje Multi-Choice           - 75% WR | R:R 1:1.8")
+        print(" 11. 🔥 EJECUTAR TODAS            - Búsqueda continua de oportunidades")
     print("\n  0. ⬅️  Volver al menú principal")
     print("\n" + "-"*70)
     
     while True:
         try:
-            choice = input("\n🎯 Selecciona estrategia GAP (0-10): ").strip()
-            
+            choice = input("\n🎯 Selecciona estrategia GAP (0-11): ").strip()            
             if choice == '0':
                 return None
+
+                        # Opción especial 11: Ejecutar TODAS las estrategias continuamente
+            if choice == '11':
+                print(f"\n🔥 MODO: Ejecución continua de TODAS las estrategias GAP")
+                print("🎯 Buscando oportunidades en las 10 estrategias simultáneamente...")
+                return 'execute_all_continuously'
+            
             
             strategies = {
                 '1': 'fair_value_gap',
