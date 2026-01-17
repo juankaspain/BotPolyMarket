@@ -21,6 +21,8 @@ from .portfolio_manager import PortfolioManager
 from .risk_manager import RiskManager, RiskProfile
 from .trade_executor import TradeExecutor
 from .circuit_breaker import CircuitBreakerManager
+from ..utils.notifications import NotificationSystem, NotificationType
+from ..utils.opportunity_analyzer import OpportunityAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,8 @@ class BotManager:
         self.risk_manager = None  # Se configura al seleccionar estrategia
         self.executor = TradeExecutor(self.api_client, self.wallet, self.portfolio)
         self.circuit_breaker_manager = CircuitBreakerManager()
+                self.notification_system = NotificationSystem(config)
+        self.opportunity_analyzer = OpportunityAnalyzer(self.api_client, config)
         
         # Registrar circuit breakers
         self._register_circuit_breakers()
