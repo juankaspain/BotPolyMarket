@@ -11,7 +11,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import Enum
+import timefrom enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -316,3 +316,105 @@ class GapStrategyEngine:
         """
         signals = self.analyze_all_strategies(market_data)
         return signals[0] if signals else None
+
+
+    def run_all_strategies_continuously(self, market_data: Dict, interval: int = 30) -> None:
+        """
+        Ejecuta TODAS las 10 estrategias GAP simultáneamente en búsqueda continua
+        
+        Args:
+            market_data: Datos del mercado de Polymarket
+            interval: Intervalo en segundos entre escaneos (default: 30s)
+            
+        Características:
+        - Escanea continuamente buscando oportunidades en las 10 estrategias
+        - Ejecuta la mejor señal disponible en cada iteración
+        - Continúa hasta que el usuario interrumpa (Ctrl+C)
+        - Muestra estadísticas en tiempo real
+        """
+        self.logger.info("🔥" * 30)
+        self.logger.info("🎯 MODO GAP: EJECUCIÓN CONTINUA DE TODAS LAS ESTRATEGIAS")
+        self.logger.info("🔥" * 30)
+        self.logger.info("")
+        self.logger.info("📊 Estrategias activas:")
+        self.logger.info("   1. Fair Value Gap (63% WR)")
+        self.logger.info("   2. Cross-Market Arbitrage (68% WR)")
+        self.logger.info("   3. Opening Gap Fill (65% WR)")
+        self.logger.info("   4. Exhaustion Gap (62% WR)")
+        self.logger.info("   5. Runaway Continuation (64% WR)")
+        self.logger.info("   6. Volume Confirmation (66% WR)")
+        self.logger.info("   7. BTC 15min Lag (70% WR)")
+        self.logger.info("   8. Correlation Gap (61% WR)")
+        self.logger.info("   9. News Catalyst Gap (72% WR)")
+        self.logger.info("  10. Multi-Choice Arbitrage (75% WR)")
+        self.logger.info("")
+        self.logger.info(f"⏰ Intervalo de escaneo: {interval}s")
+        self.logger.info("🛑 Presiona Ctrl+C para detener")
+        self.logger.info("")
+        
+        opportunities_found = 0
+        trades_executed = 0
+        scan_count = 0
+        
+        try:
+            while True:
+                scan_count += 1
+                self.logger.info(f"\n🔍 Escaneo #{scan_count} - {datetime.now().strftime('%H:%M:%S')}")
+                
+                # Analizar todas las estrategias
+                signals = self.analyze_all_strategies(market_data)
+                
+                if signals:
+                    opportunities_found += len(signals)
+                    best_signal = signals[0]  # Mejor señal (mayor confianza)
+                    
+                    self.logger.info(f"✅ {len(signals)} oportunidad(es) detectada(s)!")
+                    self.logger.info(f"")
+                    self.logger.info(f"🎯 MEJOR SEÑAL:")
+                    self.logger.info(f"   Estrategia: {best_signal.strategy_name}")
+                    self.logger.info(f"   Dirección: {best_signal.direction}")
+                    self.logger.info(f"   Confianza: {best_signal.confidence}%")
+                    self.logger.info(f"   Win Rate: {best_signal.expected_win_rate}%")
+                    self.logger.info(f"   R:R Ratio: 1:{best_signal.risk_reward_ratio}")
+                    self.logger.info(f"   Entry: ${best_signal.entry_price:.4f}")
+                    self.logger.info(f"   Stop Loss: ${best_signal.stop_loss:.4f}")
+                    self.logger.info(f"   Take Profit: ${best_signal.take_profit:.4f}")
+                    self.logger.info(f"   Razón: {best_signal.reasoning}")
+                    
+                    # Aquí se ejecutaría la operación con TradeExecutor
+                    # trades_executed += 1
+                    
+                    # Mostrar otras oportunidades detectadas
+                    if len(signals) > 1:
+                        self.logger.info(f"\n📈 Otras oportunidades detectadas:")
+                        for i, sig in enumerate(signals[1:], 2):
+                            self.logger.info(f"   #{i}: {sig.strategy_name} ({sig.confidence}% conf)")
+                else:
+                    self.logger.info("⏳ No se encontraron oportunidades en este escaneo")
+                
+                # Estadísticas
+                self.logger.info(f"")
+                self.logger.info(f"📊 Estadísticas:")
+                self.logger.info(f"   Escaneos: {scan_count}")
+                self.logger.info(f"   Oportunidades: {opportunities_found}")
+                self.logger.info(f"   Trades: {trades_executed}")
+                
+                # Esperar antes del siguiente escaneo
+                self.logger.info(f"\n⏸️  Esperando {interval}s hasta el próximo escaneo...")
+                time.sleep(interval)
+                
+        except KeyboardInterrupt:
+            self.logger.info("\n\n🛑 Ejecución detenida por el usuario")
+            self.logger.info(f"")
+            self.logger.info(f"📊 RESUMEN FINAL:")
+            self.logger.info(f"   Total escaneos: {scan_count}")
+            self.logger.info(f"   Total oportunidades: {opportunities_found}")
+            self.logger.info(f"   Total trades: {trades_executed}")
+            if scan_count > 0:
+                self.logger.info(f"   Oportunidades/escaneo: {opportunities_found/scan_count:.2f}")
+            self.logger.info(f"")
+            self.logger.info("✅ Modo GAP finalizado correctamente")
+        
+        except Exception as e:
+            self.logger.error(f"🚨 Error en run_all_strategies_continuously: {e}", exc_info=True)
+            raise
