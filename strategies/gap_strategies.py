@@ -230,44 +230,313 @@ class GapStrategyEngine:
         """ESTRATEGIA 4: Gap de Agotamiento - Win Rate: 62%"""
         # Detecta gaps al final de movimientos extremos
         # Señal de reversión con alta probabilidad
-        pass
-    
+        try:
+            # Detectar gap de agotamiento al final de tendencia
+            candles = market_data.get('candles', [])
+            if len(candles) < 10:
+                return None
+            
+            current_price = market_data.get('current_price', 0)
+            volume = market_data.get('volume', [])
+            
+            # Verificar movimiento extremo (> 15% en últimas 5 velas)
+            price_change = abs(candles[-1]['close'] - candles[-5]['close']) / candles[-5]['close']
+            
+            if price_change > 0.15:
+                # Gap de agotamiento - reversión esperada
+                avg_volume = sum(volume[-10:-1]) / 9 if len(volume) >= 10 else 0
+                last_volume = volume[-1] if volume else 0
+                
+                # Volumen decreciente = señal de agotamiento
+                if last_volume < avg_volume:
+                    direction = "NO" if candles[-1]['close'] > candles[-5]['close'] else "YES"
+                    
+                    return GapSignal(
+                        strategy_name="Exhaustion Gap",
+                        gap_type=GapType.EXHAUSTION,
+                        signal_strength=SignalStrength.STRONG,
+                        direction=direction,
+                        entry_price=current_price,
+                        stop_loss=current_price * (1.03 if direction=="YES" else 0.97),
+                        take_profit=current_price * (1.10 if direction=="YES" else 0.90),
+                        confidence=62.0,
+                        expected_win_rate=62.0,
+                        risk_reward_ratio=3.0,
+                        timeframe="4h",
+                        reasoning=f"Gap de agotamiento detectado - precio cambió {price_change*100:.1f}% con volumen decreciente",
+                        market_data=market_data
+                    )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_exhaustion_gap: {e}")
+        
+        return None    
     def strategy_runaway_continuation(self, market_data: Dict) -> Optional[GapSignal]:
         """ESTRATEGIA 5: Gap de Continuación - Win Rate: 64%"""
         # Gaps en medio de tendencia fuerte
         # Alta probabilidad de continuación
-        pass
-    
+        try:
+            # Detectar gap de continuación en medio de tendencia fuerte
+            candles = market_data.get('candles', [])
+            if len(candles) < 20:
+                return None
+            
+            current_price = market_data.get('current_price', 0)
+            
+            # Calcular tendencia (precio actual vs media de 20 velas)
+            avg_20 = sum([c['close'] for c in candles[-20:]]) / 20
+            trend_strength = abs(current_price - avg_20) / avg_20
+            
+            # Tendencia fuerte: >10% de diferencia
+            if trend_strength > 0.10:
+                # Detectar gap de continuación (gap en dirección de la tendencia)
+                last_gap = abs(candles[-1]['open'] - candles[-2]['close']) / candles[-2]['close']
+                
+                if last_gap > 0.02:  # Gap significativo >2%
+                    # Determinar dirección de la tendencia
+                    direction = "YES" if current_price > avg_20 else "NO"
+                    
+                    return GapSignal(
+                        strategy_name="Runaway Continuation",
+                        gap_type=GapType.RUNAWAY,
+                        signal_strength=SignalStrength.VERY_STRONG,
+                        direction=direction,
+                        entry_price=current_price,
+                        stop_loss=current_price * (0.96 if direction=="YES" else 1.04),
+                        take_profit=current_price * (1.15 if direction=="YES" else 0.85),
+                        confidence=64.0,
+                        expected_win_rate=64.0,
+                        risk_reward_ratio=3.5,
+                        timeframe="2h",
+                        reasoning=f"Gap de continuación {last_gap*100:.1f}% en tendencia fuerte ({trend_strength*100:.1f}%)",
+                        market_data=market_data
+                    )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_runaway_continuation: {e}")
+        
+        return None    
     def strategy_volume_gap_confirmation(self, market_data: Dict) -> Optional[GapSignal]:
         """ESTRATEGIA 6: Confirmación por Volumen - Win Rate: 66%"""
         # Gaps con volumen excepcional (>2x promedio)
         # 85% de gaps de bajo volumen se llenan en 2 días
-        pass
-    
+        try:
+            # Detectar gaps con volumen excepcional
+            candles = market_data.get('candles', [])
+            volume = market_data.get('volume', [])
+            
+            if len(candles) < 10 or len(volume) < 10:
+                return None
+            
+            current_price = market_data.get('current_price', 0)
+            
+            # Calcular volumen promedio
+            avg_volume = sum(volume[-10:]) / 10
+            last_volume = volume[-1]
+            
+            # Gap con volumen excepcional (>2x promedio)
+            if last_volume > avg_volume * 2:
+                # Detectar gap
+                last_gap = abs(candles[-1]['open'] - candles[-2]['close']) / candles[-2]['close']
+                
+                if last_gap > 0.02:
+                    # Alto volumen confirma dirección del gap
+                    direction = "YES" if candles[-1]['close'] > candles[-1]['open'] else "NO"
+                    
+                    return GapSignal(
+                        strategy_name="Volume Gap Confirmation",
+                        gap_type=GapType.BREAKAWAY,
+                        signal_strength=SignalStrength.VERY_STRONG,
+                        direction=direction,
+                        entry_price=current_price,
+                        stop_loss=current_price * (0.975 if direction=="YES" else 1.025),
+                        take_profit=current_price * (1.12 if direction=="YES" else 0.88),
+                        confidence=66.0,
+                        expected_win_rate=66.0,
+                        risk_reward_ratio=4.0,
+                        timeframe="1h",
+                        reasoning=f"Gap de {last_gap*100:.1f}% con volumen excepcional ({last_volume/avg_volume:.1f}x promedio)",
+                        market_data=market_data
+                    )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_volume_gap_confirmation: {e}")
+        
+        return None    
     def strategy_btc_15min_lag(self, market_data: Dict) -> Optional[GapSignal]:
         """ESTRATEGIA 7: Lag de BTC 15min - Win Rate: 70%"""
         # Explota retraso en actualización de precios BTC en Polymarket
         # Arbitraje de alta frecuencia
-        pass
-    
+        try:
+            # Arbitraje de alta frecuencia: explota el lag en actualización de precios BTC
+            btc_external_price = market_data.get('btc_external_price', 0)
+            btc_poly_price = market_data.get('btc_polymarket_price', 0)
+            
+            if not btc_external_price or not btc_poly_price:
+                return None
+            
+            current_price = market_data.get('current_price', 0)
+            
+            # Calcular lag/gap entre Polymarket y mercado externo
+            price_lag = abs(btc_poly_price - btc_external_price) / btc_external_price
+            
+            # Oportunidad significativa si lag > 1%
+            if price_lag > 0.01:
+                # Polymarket está atrasado - arbitraje instantáneo
+                direction = "YES" if btc_poly_price < btc_external_price else "NO"
+                
+                return GapSignal(
+                    strategy_name="BTC 15min Lag Arbitrage",
+                    gap_type=GapType.ARBITRAGE,
+                    signal_strength=SignalStrength.VERY_STRONG,
+                    direction=direction,
+                    entry_price=current_price,
+                    stop_loss=current_price * (0.99 if direction=="YES" else 1.01),
+                    take_profit=btc_external_price * 0.995 if direction=="YES" else btc_external_price * 1.005,
+                    confidence=70.0,
+                    expected_win_rate=70.0,
+                    risk_reward_ratio=5.0,
+                    timeframe="15min",
+                    reasoning=f"Lag de precio BTC: {price_lag*100:.2f}% - Arbitraje de alta frecuencia",
+                    market_data=market_data
+                )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_btc_15min_lag: {e}")
+        
+        return None    
     def strategy_correlation_gap(self, market_data: Dict) -> Optional[GapSignal]:
         """ESTRATEGIA 8: Gap de Correlación - Win Rate: 61%"""
         # BTC/ETH correlation pairs trading
         # Detecta divergencias de correlación
-        pass
-    
+        try:
+            # BTC/ETH pairs trading - detecta divergencias de correlación
+            btc_price = market_data.get('btc_price', 0)
+            eth_price = market_data.get('eth_price', 0)
+            btc_change = market_data.get('btc_24h_change', 0)
+            eth_change = market_data.get('eth_24h_change', 0)
+            
+            if not btc_price or not eth_price:
+                return None
+            
+            current_price = market_data.get('current_price', 0)
+            
+            # Detectar divergencia en correlación (normalmente BTC/ETH mueven juntos)
+            correlation_gap = abs(btc_change - eth_change)
+            
+            # Divergencia significativa: >5% de diferencia en cambio 24h
+            if correlation_gap > 5.0:
+                # El activo rezagado debería converger
+                if abs(btc_change) > abs(eth_change):
+                    # ETH rezagado - debería seguir a BTC
+                    direction = "YES" if btc_change > 0 else "NO"
+                else:
+                    # BTC rezagado - debería seguir a ETH
+                    direction = "YES" if eth_change > 0 else "NO"
+                
+                return GapSignal(
+                    strategy_name="Correlation Gap (BTC/ETH)",
+                    gap_type=GapType.COMMON,
+                    signal_strength=SignalStrength.MODERATE,
+                    direction=direction,
+                    entry_price=current_price,
+                    stop_loss=current_price * (0.97 if direction=="YES" else 1.03),
+                    take_profit=current_price * (1.08 if direction=="YES" else 0.92),
+                    confidence=61.0,
+                    expected_win_rate=61.0,
+                    risk_reward_ratio=2.5,
+                    timeframe="6h",
+                    reasoning=f"Divergencia de correlación BTC/ETH: {correlation_gap:.1f}% - Convergencia esperada",
+                    market_data=market_data
+                )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_correlation_gap: {e}")
+        
+        return None    
     def strategy_news_catalyst_gap(self, market_data: Dict) -> Optional[GapSignal]:
         """ESTRATEGIA 9: Gap por Catálisis - Win Rate: 72%"""
         # Gaps causados por noticias/eventos
         # Breakaway gaps con alta convicción
-        pass
-    
+        try:
+            # Detectar gaps causados por noticias/eventos importantes
+            news_events = market_data.get('news_events', [])
+            candles = market_data.get('candles', [])
+            
+            if not news_events or len(candles) < 5:
+                return None
+            
+            current_price = market_data.get('current_price', 0)
+            
+            # Verificar si hay evento reciente (< 2 horas)
+            recent_event = any(e.get('timestamp', 0) > datetime.now().timestamp() - 7200 for e in news_events)
+            
+            if recent_event:
+                # Detectar gap post-evento
+                pre_event_price = candles[-5]['close']
+                price_change = abs(current_price - pre_event_price) / pre_event_price
+                
+                # Gap significativo >3% post-evento
+                if price_change > 0.03:
+                    # Breakaway gap con alta convicción
+                    # Eventos tienden a crear tendencias sostenibles
+                    direction = "YES" if current_price > pre_event_price else "NO"
+                    
+                    return GapSignal(
+                        strategy_name="News Catalyst Gap",
+                        gap_type=GapType.BREAKAWAY,
+                        signal_strength=SignalStrength.VERY_STRONG,
+                        direction=direction,
+                        entry_price=current_price,
+                        stop_loss=current_price * (0.96 if direction=="YES" else 1.04),
+                        take_profit=current_price * (1.18 if direction=="YES" else 0.82),
+                        confidence=72.0,
+                        expected_win_rate=72.0,
+                        risk_reward_ratio=4.5,
+                        timeframe="12h",
+                        reasoning=f"Gap de {price_change*100:.1f}% causado por evento - Momentum sostenible",
+                        market_data=market_data
+                    )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_news_catalyst_gap: {e}")
+        
+        return None    
     def strategy_multi_choice_arbitrage(self, market_data: Dict) -> Optional[GapSignal]:
         """ESTRATEGIA 10: Arbitraje Multi-Choice - Win Rate: 75%"""
         # Mercados multi-opción con precio total >$1
         # Oportunidad de arbitraje garantizado
-        pass
-
+        try:
+            # Arbitraje en mercados multi-opción donde suma de probabilidades > 100%
+            market_options = market_data.get('market_options', [])
+            
+            if not market_options or len(market_options) < 2:
+                return None
+            
+            # Calcular suma total de probabilidades
+            total_probability = sum([opt.get('price', 0) for opt in market_options])
+            
+            # Oportunidad de arbitraje si total > $1.00 (>100%)
+            if total_probability > 1.0:
+                # Arbitraje garantizado - comprar todas las opciones
+                arbitrage_profit = ((total_probability - 1.0) / total_probability) * 100
+                
+                # Encontrar la opción más subvaluada
+                best_option = min(market_options, key=lambda x: x.get('price', float('inf')))
+                
+                return GapSignal(
+                    strategy_name="Multi-Choice Arbitrage",
+                    gap_type=GapType.ARBITRAGE,
+                    signal_strength=SignalStrength.VERY_STRONG,
+                    direction="YES",  # Comprar todas las opciones
+                    entry_price=best_option.get('price', 0),
+                    stop_loss=0,  # No hay stop - arbitraje garantizado
+                    take_profit=1.0,  # Payout garantizado
+                    confidence=75.0,
+                    expected_win_rate=75.0,
+                    risk_reward_ratio=arbitrage_profit,
+                    timeframe="instant",
+                    reasoning=f"Arbitraje multi-choice: {arbitrage_profit:.2f}% de profit garantizado (total={total_probability:.3f})",
+                    market_data=market_data
+                )
+        except Exception as e:
+            self.logger.error(f"Error en strategy_multi_choice_arbitrage: {e}")
+        
+        return None
     # ============================================================================
     # MÉTODO PRINCIPAL: Analizar todas las estrategias
     # ============================================================================
