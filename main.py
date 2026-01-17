@@ -22,7 +22,7 @@ try:
     if os.getenv('MODE') == 'execute':
         from core.wallet_manager import WalletManager
         from core.trade_executor import TradeExecutor
-        from core.risk_manager import RiskManager
+        from core.risk_manager import RiskManager, RiskProfiles
 except ImportError as e:
     logging.warning(f"Execute mode modules not available: {e}")
 
@@ -84,6 +84,53 @@ class Config:
 # ============================================================================
 # CONFIGURACIÓN DE LOGGING
 # ============================================================================
+
+# ============================================================================
+# MENÚ INTERACTIVO DE PERFILES DE RIESGO
+# ============================================================================
+
+def select_risk_profile() -> str:
+    """Menú interactivo para seleccionar perfil de riesgo"""
+    profiles = RiskProfiles.list_profiles()
+    
+    print("\n" + "="*70)
+    print("🎯  SELECCIÓN DE PERFIL DE RIESGO")
+    print("="*70 + "\n")
+    
+    # Mostrar opciones
+    profile_keys = list(profiles.keys())
+    for idx, (key, info) in enumerate(profiles.items(), 1):
+        riesgo_bar = "■" * info['riesgo'] + "□" * (5 - info['riesgo'])
+        print(f"{idx}. {info['emoji']}  {info['nombre']}")
+        print(f"   Riesgo: [{riesgo_bar}]")
+        print(f"   {info['descripcion']}")
+        print(f"   👥 {info['recomendado_para']}")
+        print()
+    
+    # Solicitar selección
+    while True:
+        try:
+            choice = input("➡️  Selecciona tu perfil (1-5) [Por defecto: 3-Neutral]: ").strip()
+            
+            if not choice:
+                print("\n✅ Perfil NEUTRAL seleccionado (por defecto)\n")
+                return 'neutral'
+            
+            choice_num = int(choice)
+            if 1 <= choice_num <= 5:
+                selected_key = profile_keys[choice_num - 1]
+                selected_info = profiles[selected_key]
+                print(f"\n✅ Perfil {selected_info['emoji']} {selected_info['nombre']} seleccionado\n")
+                return selected_key
+            else:
+                print("❌ Opción inválida. Elige un número del 1 al 5.")
+        
+        except ValueError:
+            print("❌ Entrada inválida. Ingresa un número del 1 al 5.")
+        except KeyboardInterrupt:
+            print("\n\n🚫 Cancelado por el usuario")
+            sys.exit(0)
+
 
 def setup_logging():
     """Configura el sistema de logging"""
@@ -209,6 +256,10 @@ class CopyTradingBot:
                 self.logger.warning("⚠️  Balance de USDC bajo")
             if balances['matic'] < 0.01:
                 self.logger.warning("⚠️  Balance de MATIC bajo para gas")
+            
+                        # Seleccionar perfil de riesgo interactivamente
+            selected_profile = select_risk_profile()
+            risk_profile = RiskProfiles.get_profile(selected_profile)
             
             # Inicializar RiskManager
             self.risk_manager = RiskManager(Config.YOUR_CAPITAL)
@@ -410,6 +461,46 @@ class CopyTradingBot:
 # PUNTO DE ENTRADA
 # ============================================================================
 
+def select_risk_profile() -> str:
+    """Menú interactivo para seleccionar perfil de riesgo"""
+    print("\n" + "="*60)
+    print("🎯 SELECCIÓN DE ESTRATEGIA DE TRADING")
+    print("="*60)
+    print("\n📊 Perfiles de riesgo disponibles:\n")
+    print("  1. 🚀 MUY AGRESIVA    - Máxima exposición, alto riesgo")
+    print("  2. ⚡ AGRESIVA        - Alta exposición, riesgo moderado-alto")
+    print("  3. ⚖️  NEUTRAL         - Equilibrio riesgo/rentabilidad")
+    print("  4. 🛡️  POCO AGRESIVA   - Baja exposición, riesgo controlado")
+    print("  5. 🔒 NO AGRESIVA     - Mínima exposición, máxima seguridad")
+    print("\n" + "-"*60)
+    
+    while True:
+        try:
+            choice = input("\nSelecciona tu estrategia (1-5): ").strip()
+            
+            profiles = {
+                '1': 'muy_agresiva',
+                '2': 'agresiva',
+                '3': 'neutral',
+                '4': 'poco_agresiva',
+                '5': 'no_agresiva'
+            }
+            
+            if choice in profiles:
+                selected = profiles[choice]
+                print(f"\n✅ Estrategia '{selected.replace('_', ' ').upper()}' seleccionada")
+                print("="*60 + "\n")
+                return selected
+            else:
+                print("❌ Opción inválida. Por favor elige un número del 1 al 5.")
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Selección cancelada por el usuario")
+            sys.exit(0)
+        except Exception as e:
+            print(f"❌ Error: {e}")
+
+
+
 def main():
     """Función principal"""
     # Configurar logging
@@ -423,15 +514,29 @@ def main():
             logger.error("\n❌ Configuración inválida. Por favor, revisa tu archivo .env")
             logger.info("\n💡 Copia .env.example a .env y configura las variables necesarias")
             sys.exit(1)
+
+                # Seleccionar perfil de riesgo interactivamente
+        if Config.MODE == 'execute':
+            selected_profile = select_risk_profile()
+            risk_profile = RiskProfiles.get_profile(selected_profile)
+            logger.info(f"💼 Perfil de riesgo seleccionado: {selected_profile.upper()}")        
         
         # Iniciar bot
         bot = CopyTradingBot()
-        bot.run()
-    
+        
+        # Configurar risk_profile si está en modo execute
+        if Config.MODE == 'execute' and 'risk_profile' in locals():
+            bot.risk_manager = RiskManager(risk_profile)
+            logger.info(f"⚙️ RiskManager actualizado con perfil '{selected_profile}'")
+
+                bot.run()
+
     except Exception as e:
-        logger.critical(f"💥 Error fatal al iniciar el bot: {e}", exc_info=True)
+        logger.critical(f"🚨 Error fatal al iniciar el bot: {e}", exc_info=True)
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+        
+        bot.run()
