@@ -42,6 +42,186 @@ class RiskLimits:
     max_exposure_per_market: float = 0.15  # 15% máximo por mercado
 
 
+# ==================== PERFILES DE RIESGO PREDEFINIDOS ====================
+
+class RiskProfiles:
+    """Perfiles de riesgo predefinidos para diferentes estilos de trading"""
+    
+    @staticmethod
+    def get_profile(profile_name: str) -> RiskLimits:
+        """Retorna un perfil de riesgo basado en el nombre"""
+        profiles = {
+            'muy_agresivo': RiskProfiles.muy_agresivo(),
+            'agresivo': RiskProfiles.agresivo(),
+            'neutral': RiskProfiles.neutral(),
+            'conservador': RiskProfiles.conservador(),
+            'muy_conservador': RiskProfiles.muy_conservador()
+        }
+        return profiles.get(profile_name, RiskProfiles.neutral())
+    
+    @staticmethod
+    def muy_agresivo() -> RiskLimits:
+        """Perfil MUY AGRESIVO - Alto riesgo, alto potencial de ganancias"""
+        return RiskLimits(
+            # Posiciones grandes
+            max_position_size=0.15,  # 15% por posición
+            max_positions_total=20,
+            max_positions_per_strategy=10,
+            max_capital_per_strategy=0.40,  # 40% por estrategia
+            
+            # Pérdidas toleradas altas
+            max_daily_loss=0.05,  # 5% pérdida diaria
+            max_drawdown=0.20,  # 20% drawdown
+            
+            # Stops más amplios
+            stop_loss_pct=0.15,  # 15%
+            take_profit_pct=0.30,  # 30%
+            trailing_stop=True,
+            trailing_stop_activation=0.15,
+            trailing_stop_distance=0.08,
+            
+            # Diversificación menor
+            min_markets=2,
+            max_exposure_per_market=0.25,
+            max_correlation=0.8
+        )
+    
+    @staticmethod
+    def agresivo() -> RiskLimits:
+        """Perfil AGRESIVO - Riesgo elevado con control moderado"""
+        return RiskLimits(
+            max_position_size=0.10,  # 10% por posición
+            max_positions_total=15,
+            max_positions_per_strategy=8,
+            max_capital_per_strategy=0.30,
+            
+            max_daily_loss=0.04,  # 4%
+            max_drawdown=0.15,  # 15%
+            
+            stop_loss_pct=0.12,
+            take_profit_pct=0.25,
+            trailing_stop=True,
+            trailing_stop_activation=0.12,
+            trailing_stop_distance=0.06,
+            
+            min_markets=2,
+            max_exposure_per_market=0.20,
+            max_correlation=0.75
+        )
+    
+    @staticmethod
+    def neutral() -> RiskLimits:
+        """Perfil NEUTRAL - Balance entre riesgo y protección (por defecto)"""
+        return RiskLimits(
+            max_position_size=0.05,  # 5%
+            max_positions_total=10,
+            max_positions_per_strategy=5,
+            max_capital_per_strategy=0.20,
+            
+            max_daily_loss=0.02,  # 2%
+            max_drawdown=0.10,  # 10%
+            
+            stop_loss_pct=0.10,
+            take_profit_pct=0.20,
+            trailing_stop=True,
+            trailing_stop_activation=0.10,
+            trailing_stop_distance=0.05,
+            
+            min_markets=3,
+            max_exposure_per_market=0.15,
+            max_correlation=0.7
+        )
+    
+    @staticmethod
+    def conservador() -> RiskLimits:
+        """Perfil CONSERVADOR - Protección de capital prioritaria"""
+        return RiskLimits(
+            max_position_size=0.03,  # 3%
+            max_positions_total=8,
+            max_positions_per_strategy=4,
+            max_capital_per_strategy=0.15,
+            
+            max_daily_loss=0.015,  # 1.5%
+            max_drawdown=0.08,  # 8%
+            
+            stop_loss_pct=0.08,
+            take_profit_pct=0.15,
+            trailing_stop=True,
+            trailing_stop_activation=0.08,
+            trailing_stop_distance=0.04,
+            
+            min_markets=4,
+            max_exposure_per_market=0.12,
+            max_correlation=0.6
+        )
+    
+    @staticmethod
+    def muy_conservador() -> RiskLimits:
+        """Perfil MUY CONSERVADOR - Máxima seguridad"""
+        return RiskLimits(
+            max_position_size=0.02,  # 2%
+            max_positions_total=5,
+            max_positions_per_strategy=3,
+            max_capital_per_strategy=0.10,
+            
+            max_daily_loss=0.01,  # 1%
+            max_drawdown=0.05,  # 5%
+            
+            stop_loss_pct=0.05,
+            take_profit_pct=0.10,
+            trailing_stop=True,
+            trailing_stop_activation=0.05,
+            trailing_stop_distance=0.03,
+            
+            min_markets=5,
+            max_exposure_per_market=0.10,
+            max_correlation=0.5
+        )
+    
+    @staticmethod
+    def list_profiles() -> dict:
+        """Lista todos los perfiles disponibles con descripción"""
+        return {
+            'muy_agresivo': {
+                'nombre': 'MUY AGRESIVO',
+                'emoji': '🔥',
+                'descripcion': 'Máximo riesgo - Hasta 15% por trade, drawdown 20%',
+                'riesgo': 5,
+                'recomendado_para': 'Traders experimentados con alto capital'
+            },
+            'agresivo': {
+                'nombre': 'AGRESIVO',
+                'emoji': '⚡',
+                'descripcion': 'Alto riesgo - Hasta 10% por trade, drawdown 15%',
+                'riesgo': 4,
+                'recomendado_para': 'Traders con experiencia'
+            },
+            'neutral': {
+                'nombre': 'NEUTRAL',
+                'emoji': '⚖️',
+                'descripcion': 'Equilibrado - Hasta 5% por trade, drawdown 10%',
+                'riesgo': 3,
+                'recomendado_para': 'Traders con capital moderado (por defecto)'
+            },
+            'conservador': {
+                'nombre': 'CONSERVADOR',
+                'emoji': '🛡️',
+                'descripcion': 'Bajo riesgo - Hasta 3% por trade, drawdown 8%',
+                'riesgo': 2,
+                'recomendado_para': 'Principiantes o capital limitado'
+            },
+            'muy_conservador': {
+                'nombre': 'MUY CONSERVADOR',
+                'emoji': '💪',
+                'descripcion': 'Mínimo riesgo - Hasta 2% por trade, drawdown 5%',
+                'riesgo': 1,
+                'recomendado_para': 'Protección de capital máxima'
+            }
+        }
+
+
+
+
 class RiskManager:
     """Gestión de riesgo profesional"""
     
