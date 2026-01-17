@@ -393,3 +393,73 @@ class BotManager:
             'failed_trades': self.failed_trades,
             'uptime': str(datetime.now() - self.start_time).split('.')[0] if self.start_time else None
         }
+        
+async def run_phase1_mode(self):
+    """
+    FASE 1: WebSocket + Multi-Market Scanner
+    Modo de alta frecuencia con detección en tiempo real
+    """
+    logger.info("🚀 INICIANDO MODO FASE 1")
+    logger.info("=" * 60)
+    
+    # Inicializar componentes
+    from core.websocket_handler import PolymarketWebSocketHandler, ExternalPriceFeeder
+    from core.multi_market_scanner import MultiMarketScanner
+    
+    # Callback para eventos WebSocket
+    async def on_market_event(event_data):
+        logger.info(f"📊 Evento detectado: {event_data['event_type']}")
+        
+        # Analizar con estrategias GAP
+        signal = self.gap_engine.get_best_signal(event_data)
+        
+        if signal and signal.confidence >= 65:
+            logger.info(f"✅ SEÑAL FUERTE: {signal.strategy_name} ({signal.confidence}%)")
+            # Ejecutar trade si está en modo EXECUTE
+            if self.execute_mode:
+                await self.execute_trade(signal)
+    
+    # Conectar WebSockets
+    ws_handler = PolymarketWebSocketHandler(
+        markets=["bitcoin-100k", "ethereum-3500", "solana-150"],
+        callback=on_market_event
+    )
+    
+    price_feeder = ExternalPriceFeeder(
+        symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+        callback=on_market_event
+    )
+    
+    # Iniciar Multi-Market Scanner
+    scanner = MultiMarketScanner(
+        api_client=self.api_client,
+        gap_engine=self.gap_engine
+    )
+    
+    try:
+        # Ejecutar en paralelo: WebSockets + Scanner
+        await asyncio.gather(
+            ws_handler.connect(),
+            price_feeder.connect(),
+            self._scanner_loop(scanner)
+        )
+    except KeyboardInterrupt:
+        logger.info("\n🛑 Deteniendo Fase 1...")
+        await ws_handler.disconnect()
+        await price_feeder.disconnect()
+        
+async def _scanner_loop(self, scanner):
+    """Loop de escaneo multi-market"""
+    while True:
+        opportunities = await scanner.scan_markets(["crypto", "finance"])
+        
+        if opportunities:
+            logger.info(f"🔍 {len(opportunities)} oportunidades encontradas")
+            
+            # Ejecutar mejor oportunidad
+            best = opportunities[0]
+            if best.confidence >= 70:
+                logger.info(f"🎯 Ejecutando: {best.market_name}")
+                # await self.execute_trade(best)
+        
+        await asyncio.sleep(30)  # Escanear cada 30s
