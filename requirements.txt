@@ -57,35 +57,106 @@ plotly>=5.17.0
 # V3.0 - MULTI-STRATEGY PRO (Feb 2026)
 # ==============================================
 
-# Arbitrage APIs (por agregar)
-# kalshi-python
-# betfair-api
+# Portfolio Optimization
+scipy>=1.11.0
+cvxpy>=1.4.0  # Para optimization avanzada
+
+# Statistical Analysis
+statsmodels>=0.14.0  # Correlación y análisis estadístico
+
+# Arbitrage APIs
+# kalshi-python>=0.1.0  # Descomentar cuando esté disponible
+# betfair-api>=1.0.0
+
+# Performance Tracking
+quantlib>=1.0.0  # Opcional - financial analytics
 
 # ==============================================
-# OPCIONAL (desarrollo y pruebas)
+# V4.0 - ENTERPRISE DASHBOARD (Mar 2026)
+# ==============================================
+
+# Dashboard
+streamlit>=1.28.0
+dash>=2.14.0
+plotly>=5.17.0  # Ya incluido arriba
+
+# Metrics & Analytics
+prometheus-client>=0.19.0
+
+# Multi-wallet support
+py-solana-sdk>=0.1.0  # Phantom wallet
+
+# Export & Reporting
+openpyxl>=3.1.0
+reportlab>=4.0.0
+
+# ==============================================
+# V5.0 - DEFI INTEGRATION (Abr 2026)
+# ==============================================
+
+# DeFi Protocols
+web3>=6.0.0  # Ya incluido arriba
+brownie>=1.19.0  # Smart contract interaction
+
+# Cross-chain
+anchor-py>=0.1.0  # Solana Anchor framework
+base-web3>=0.1.0  # Base L2 support
+
+# Flash Loans (añadir cuando se implemente)
+# aave-protocol-py>=1.0.0
+# flashbots>=1.0.0
+
+# ==============================================
+# V6.0 - INSTITUTIONAL (May-Jun 2026)
+# ==============================================
+
+# API Development
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# Authentication & Security
+pyjwt>=2.8.0
+cryptography>=41.0.0
+passlib>=1.7.4
+
+# Compliance & KYC
+# sumsub-sdk>=1.0.0  # KYC provider
+# onfido>=1.0.0
+
+# ==============================================
+# TESTING & DEVELOPMENT
 # ==============================================
 
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
+pytest-mock>=3.12.0
 
 # Linting y formateo
 black>=23.7.0
 flake8>=6.1.0
 mypy>=1.5.0
+isort>=5.12.0
 
 # Type hints
 types-requests>=2.31.0
 types-python-dateutil>=2.8.19
 
 # ==============================================
-# PRODUCTION (opcional)
+# PRODUCTION
 # ==============================================
 
-# Monitoring
-# sentry-sdk>=1.30.0  # Uncomment para error tracking
+# Monitoring & Error Tracking
+sentry-sdk>=1.30.0
 
-# Dashboard (v4.0)
-# streamlit>=1.28.0
-# dash>=2.14.0
+# Logging
+loguru>=0.7.0
+
+# Task Queue (para v6.0)
+celery>=5.3.0
+redis>=5.0.0
+
+# Rate Limiting
+slowapi>=0.1.9
