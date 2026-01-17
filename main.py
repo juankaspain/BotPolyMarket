@@ -17,6 +17,15 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# Imports condicionales para modo Execute
+try:
+    if os.getenv('MODE') == 'execute':
+        from core.wallet_manager import WalletManager
+        from core.trade_executor import TradeExecutor
+        from core.risk_manager import RiskManager
+except ImportError as e:
+    logging.warning(f"Execute mode modules not available: {e}")
+
 # Cargar variables de entorno
 load_dotenv()
 
@@ -165,6 +174,65 @@ class CopyTradingBot:
         self.logger = logging.getLogger(__name__)
         self.previous_positions: Dict[str, str] = {}
         self.iteration: int = 0
+        
+        # Módulos Execute mode
+        self.wallet_manager = None
+        self.trade_executor = None
+        self.risk_manager = None
+        
+        # Inicializar Execute mode si está habilitado
+        if Config.MODE == 'execute':
+            self._init_execute_mode()
+                    self.previous_positions: Dict[str, str] = {}
+        self.iteration: int = 0
+    
+    def _init_execute_mode(self):
+        """Inicializa los módulos necesarios para Execute mode"""
+        try:
+            self.logger.info("⚡ Inicializando Execute mode...")
+            
+            # Inicializar WalletManager
+            private_key = os.getenv('PRIVATE_KEY')
+            if not private_key:
+                raise ValueError("❌ PRIVATE_KEY no configurada en .env")
+            
+            self.wallet_manager = WalletManager(private_key)
+            wallet_address = self.wallet_manager.get_address()
+            self.logger.info(f"✅ Wallet: {wallet_address[:6]}...{wallet_address[-4:]}")
+            
+            # Verificar balances
+            balances = self.wallet_manager.get_balances()
+            self.logger.info(f"💵 USDC: ${balances['usdc']:.2f}")
+            self.logger.info(f"⛽ MATIC: {balances['matic']:.4f}")
+            
+            if balances['usdc'] < 1:
+                self.logger.warning("⚠️  Balance de USDC bajo")
+            if balances['matic'] < 0.01:
+                self.logger.warning("⚠️  Balance de MATIC bajo para gas")
+            
+            # Inicializar RiskManager
+            self.risk_manager = RiskManager(Config.YOUR_CAPITAL)
+            self.logger.info(f"🛡️  RiskManager configurado con ${Config.YOUR_CAPITAL:,.2f}")
+            
+            # Inicializar TradeExecutor
+            dry_run = os.getenv('DRY_RUN_MODE', 'true').lower() == 'true'
+            self.trade_executor = TradeExecutor(self.wallet_manager, dry_run=dry_run)
+            
+            if dry_run:
+                self.logger.warning("🧪 DRY RUN MODE - No se ejecutarán trades reales")
+            else:
+                self.logger.info("✅ LIVE MODE - Trades reales activados")
+            
+            self.logger.info("✅ Execute mode inicializado correctamente\n")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error inicializando Execute mode: {e}")
+            self.logger.error("Bot continuará en modo MONITOR")
+            self.wallet_manager = None
+            self.trade_executor = None
+            self.risk_manager = None
+        self.previous_positions: Dict[str, str] = {}
+        self.iteration: int = 0
     
     def display_banner(self):
         """Muestra el banner inicial del bot"""
@@ -236,9 +304,43 @@ class CopyTradingBot:
                     self.logger.info(f"      └─ Tamaño: {size:.0f} shares (${initial_value:.2f})")
                     
                     if Config.MODE == "execute":
-                        self.logger.warning("      └─ ⚠️ MODO EXECUTE no implementado (requiere wallet)")
+                        # Ejecutar trade con Execute mode
+                    if self.trade_executor and self.risk_manager:
+                        # Validar con RiskManager
+                        can_trade, reason = self.risk_manager.can_open_position(
+                            strategy='copy_trading',
+                            market_id=pos.get('assetId', ''),
+                            size=initial_value
+                        )
+                        
+                        if can_trade:
+                            try:
+                                # Ejecutar trade
+                                result = self.trade_executor.place_order(
+                                    token_id=pos.get('assetId'),
+                                    side=outcome.lower(),
+                                    size=size,
+                                    price=avg_price
+                                )
+                                
+                                if result['success']:
+                                    self.logger.info(f"✅ Trade ejecutado: {result['order_id']}")
+                                    # Registrar posición en RiskManager
+                                    self.risk_manager.register_position(
+                                        position_id=result['order_id'],
+                                        strategy='copy_trading',
+                                        market_id=pos.get('assetId', ''),
+                                        size=initial_value,
+                                        entry_price=avg_price
+                                    )
+                                else:
+                                    self.logger.error(f"❌ Error ejecutando trade: {result.get('error')}")
+                            except Exception as e:
+                                self.logger.error(f"❌ Excepción ejecutando trade: {e}")
+                        else:
+                            self.logger.warning(f"⚠️  Trade bloqueado por RiskManager: {reason}")
                     else:
-                        self.logger.info("      └─ ℹ️ Modo MONITOR - No se ejecuta trade")
+                        self.logger.warning("⚠️  Execute mode no inicializado correctamente")
     
     def update_position_tracking(self, current_positions: List[Dict]):
         """Actualiza el tracking de posiciones"""
