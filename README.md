@@ -118,6 +118,215 @@ Las contribuciones son bienvenidas. Por favor:
 
 ## ℹ️ Disclaimer
 
+
+
+## 🏛️ Arquitectura del Bot
+
+El bot está estructurado de forma modular y profesional:
+
+### Componentes Principales
+
+- **Config**: Clase centralizada para toda la configuración
+  - Valida variables de entorno al iniciar
+  - Proporciona valores por defecto seguros
+  - Fácil de extender para nuevas configuraciones
+
+- **PolymarketClient**: Cliente HTTP robusto
+  - Estrategia de reintentos automáticos
+  - Manejo completo de errores de red
+  - Timeouts configurables
+  - Logging detallado de peticiones
+
+- **CopyTradingBot**: Lógica principal del bot
+  - Detección de nuevas posiciones
+  - Tracking de cambios en el portafolio
+  - Alertas visuales con emojis
+  - Separación clara entre monitoreo y ejecución
+
+### Sistema de Logging
+
+- Doble salida: consola + archivo
+- Niveles configurables (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- Formato estructurado con timestamps
+- Rotación automática de logs (pendiente)
+
+### Gestión de Errores
+
+- Captura de excepciones específicas de red
+- Reintentos automáticos con backoff exponencial
+- Logs detallados con stack traces
+- El bot nunca se detiene por un error puntual
+
+---
+
+## 🚀 Despliegue en Producción
+
+### Opción 1: VPS / Servidor Cloud
+
+```bash
+# 1. Conectar al servidor
+ssh usuario@tu-servidor.com
+
+# 2. Clonar el repositorio
+git clone https://github.com/juankaspain/BotPolyMarket.git
+cd BotPolyMarket
+
+# 3. Crear entorno virtual
+python3 -m venv venv
+source venv/bin/activate
+
+# 4. Instalar dependencias
+pip install -r requirements.txt
+
+# 5. Configurar variables de entorno
+cp .env.example .env
+nano .env  # Editar con tus valores
+
+# 6. Ejecutar con systemd (recomendado)
+sudo nano /etc/systemd/system/botpolymarket.service
+```
+
+**Archivo systemd service:**
+```ini
+[Unit]
+Description=Bot de Copy Trading para Polymarket
+After=network.target
+
+[Service]
+Type=simple
+User=tu-usuario
+WorkingDirectory=/home/tu-usuario/BotPolyMarket
+Environment="PATH=/home/tu-usuario/BotPolyMarket/venv/bin"
+ExecStart=/home/tu-usuario/BotPolyMarket/venv/bin/python main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# Activar y arrancar el servicio
+sudo systemctl daemon-reload
+sudo systemctl enable botpolymarket
+sudo systemctl start botpolymarket
+
+# Ver logs
+sudo journalctl -u botpolymarket -f
+```
+
+### Opción 2: Docker (próximamente)
+
+```dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+CMD ["python", "main.py"]
+```
+
+### Opción 3: Screen/Tmux (desarrollo)
+
+```bash
+# Crear sesión persistente
+screen -S polymarket-bot
+python main.py
+# Ctrl+A, D para desconectar
+
+# Reconectar
+screen -r polymarket-bot
+```
+
+---
+
+## 📊 Monitorización
+
+### Logs
+
+El bot genera logs detallados en `bot_polymarket.log` (por defecto):
+
+```bash
+# Ver logs en tiempo real
+tail -f bot_polymarket.log
+
+# Buscar errores
+grep ERROR bot_polymarket.log
+
+# Últimas 100 líneas
+tail -n 100 bot_polymarket.log
+```
+
+### Métricas Clave
+
+- **Posiciones activas detectadas**: Número de posiciones del trader objetivo
+- **Nuevas posiciones**: Alertas cuando se detectan nuevos trades
+- **Errores de API**: Problemas de conexión con Polymarket
+- **Uptime**: Tiempo que el bot lleva ejecutándose
+
+---
+
+## 🔧 Troubleshooting
+
+### El bot no arranca
+
+```bash
+# Verificar Python
+python --version  # Debe ser 3.8+
+
+# Verificar dependencias
+pip list
+
+# Reinstalar dependencias
+pip install --force-reinstall -r requirements.txt
+```
+
+### Error "TRADER_ADDRESS no configurada"
+
+```bash
+# Verifica que el archivo .env existe
+ls -la .env
+
+# Verifica el contenido (sin mostrar valores sensibles)
+grep TRADER_ADDRESS .env
+```
+
+### Error de conexión a Polymarket API
+
+- Verifica tu conexión a internet
+- Polymarket API puede tener límites de rate
+- Aumenta `POLLING_INTERVAL` a 60 segundos o más
+
+### El bot se detiene solo
+
+```bash
+# Ver errores recientes
+tail -n 50 bot_polymarket.log | grep ERROR
+
+# Usar systemd para auto-restart (ver sección Despliegue)
+```
+
+---
+
+## 📦 Actualizaciones
+
+```bash
+# Detener el bot
+sudo systemctl stop botpolymarket  # Si usas systemd
+# O Ctrl+C si está en terminal
+
+# Actualizar código
+git pull origin main
+
+# Actualizar dependencias
+pip install -r requirements.txt --upgrade
+
+# Reiniciar
+sudo systemctl start botpolymarket
+```
+
+---
+
 Este bot es solo para fines educativos. El trading conlleva riesgos y puedes perder todo tu capital. No somos responsables de pérdidas financieras derivadas del uso de este software.
 
 ## 📞 Soporte
