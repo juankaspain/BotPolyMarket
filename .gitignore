@@ -213,3 +213,14 @@ marimo/_static/
 logs/
 marimo/_lsp/
 __marimo__/
+
+
+# Polymarket Bot - Secrets
+# CRITICAL: Never commit .env file
+.env
+.env.local
+.env.*.local
+
+# Bot specific
+polymarket_bot.db
+polymarket_bot.db-journal
