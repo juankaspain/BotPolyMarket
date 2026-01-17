@@ -1,274 +1,254 @@
 #!/usr/bin/env python3
 """
 Sentiment Analyzer v2.0
-Analiza sentiment de news, crypto tweets y social media
+Analiza sentiment de news + crypto tweets para predicción de gaps
 """
 import logging
 import re
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-import os
-
-try:
-    import tweepy
-    TWEEPY_AVAILABLE = True
-except ImportError:
-    TWEEPY_AVAILABLE = False
-
-try:
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-    VADER_AVAILABLE = True
-except ImportError:
-    VADER_AVAILABLE = False
-
-try:
-    from transformers import pipeline
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-
 import requests
+from textblob import TextBlob
+import feedparser
 
 logger = logging.getLogger(__name__)
 
 class SentimentAnalyzer:
     """
-    Analizador de sentiment multi-fuente
+    Analiza sentiment de múltiples fuentes:
+    - CryptoCompare News API
+    - RSS feeds (CoinDesk, CoinTelegraph)
+    - Keywords en market slugs
     
-    Sources:
-    - Twitter/X API para crypto tweets
-    - Reddit API para r/CryptoCurrency, r/PolymarketBets
-    - News APIs (NewsAPI, CryptoCompare)
-    - VADER para análisis rápido
-    - FinBERT para análisis avanzado (opcional)
+    Output: Score [-1, 1] donde:
+    - > 0.5: Muy positivo
+    - 0.2 to 0.5: Positivo
+    - -0.2 to 0.2: Neutral
+    - < -0.2: Negativo
     """
     
     def __init__(self, config: dict):
         self.config = config
+        self.cryptocompare_api_key = config.get('cryptocompare_api_key', '')
         self.cache = {}  # Cache de sentiments por market
         self.cache_ttl = 300  # 5 minutos
         
-        # VADER (lightweight, rápido)
-        if VADER_AVAILABLE:
-            self.vader = SentimentIntensityAnalyzer()
-            logger.info("✅ VADER Sentiment Analyzer loaded")
-        else:
-            self.vader = None
-            logger.warning("⚠️ VADER no disponible. Instalar: pip install vaderSentiment")
+        # RSS feeds de crypto news
+        self.news_feeds = [
+            'https://cointelegraph.com/rss',
+            'https://www.coindesk.com/arc/outboundfeeds/rss/',
+            'https://cryptonews.com/news/feed/',
+        ]
         
-        # FinBERT (opcional, más preciso pero lento)
-        self.finbert = None
-        if TRANSFORMERS_AVAILABLE and config.get('use_finbert', False):
-            try:
-                self.finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert")
-                logger.info("✅ FinBERT loaded")
-            except Exception as e:
-                logger.warning(f"⚠️ No se pudo cargar FinBERT: {e}")
+        # Keywords positivas/negativas
+        self.positive_keywords = [
+            'rally', 'surge', 'bullish', 'adoption', 'breakthrough',
+            'partnership', 'upgrade', 'growth', 'record', 'milestone',
+            'approve', 'win', 'success', 'innovation', 'launch'
+        ]
         
-        # Twitter API
-        self.twitter_client = None
-        if TWEEPY_AVAILABLE and config.get('twitter_bearer_token'):
-            try:
-                self.twitter_client = tweepy.Client(
-                    bearer_token=config['twitter_bearer_token']
-                )
-                logger.info("✅ Twitter API connected")
-            except Exception as e:
-                logger.warning(f"⚠️ Twitter API error: {e}")
-        
-        # NewsAPI
-        self.news_api_key = config.get('news_api_key')
+        self.negative_keywords = [
+            'crash', 'drop', 'bear', 'hack', 'scam', 'fraud',
+            'regulation', 'ban', 'lawsuit', 'warning', 'risk',
+            'concern', 'fail', 'collapse', 'crisis', 'decline'
+        ]
     
     def get_market_sentiment(self, market_slug: str) -> float:
         """
-        Obtiene sentiment agregado de un market
+        Obtiene sentiment score para un market específico
         
         Args:
-            market_slug: Slug del mercado (ej: 'trump-win-2024')
+            market_slug: Identificador del mercado (e.g., "bitcoin-price-2024")
         
         Returns:
-            Sentiment score [-1.0, 1.0]
-            -1.0 = muy negativo
-             0.0 = neutral
-            +1.0 = muy positivo
+            Sentiment score [-1, 1]
         """
         # Check cache
-        cache_key = f"sentiment_{market_slug}"
+        cache_key = f"{market_slug}:{int(datetime.now().timestamp() / self.cache_ttl)}"
         if cache_key in self.cache:
-            cached_time, cached_value = self.cache[cache_key]
-            if (datetime.now() - cached_time).seconds < self.cache_ttl:
-                return cached_value
+            return self.cache[cache_key]
         
         # Extraer keywords del market slug
         keywords = self._extract_keywords(market_slug)
         
+        # Obtener sentiments de múltiples fuentes
         sentiments = []
         
-        # 1. Twitter sentiment
-        if self.twitter_client:
-            twitter_sentiment = self._get_twitter_sentiment(keywords)
-            if twitter_sentiment is not None:
-                sentiments.append(twitter_sentiment)
+        # 1. Sentiment de keywords en el slug
+        slug_sentiment = self._analyze_text(market_slug)
+        sentiments.append(slug_sentiment * 0.3)  # Peso 30%
         
-        # 2. News sentiment
-        if self.news_api_key:
+        # 2. Sentiment de news
+        if keywords:
             news_sentiment = self._get_news_sentiment(keywords)
-            if news_sentiment is not None:
-                sentiments.append(news_sentiment)
+            sentiments.append(news_sentiment * 0.7)  # Peso 70%
         
-        # 3. Reddit sentiment (opcional)
-        # reddit_sentiment = self._get_reddit_sentiment(keywords)
-        # if reddit_sentiment is not None:
-        #     sentiments.append(reddit_sentiment)
-        
-        # Agregar sentiments (promedio ponderado)
+        # Calcular score final
         if sentiments:
-            final_sentiment = sum(sentiments) / len(sentiments)
+            final_score = sum(sentiments) / len(sentiments)
         else:
-            final_sentiment = 0.0  # Neutral por defecto
+            final_score = 0.0
         
-        # Cache result
-        self.cache[cache_key] = (datetime.now(), final_sentiment)
+        # Normalizar a [-1, 1]
+        final_score = max(-1.0, min(1.0, final_score))
         
-        return final_sentiment
+        # Cache
+        self.cache[cache_key] = final_score
+        
+        logger.debug(f"Sentiment for '{market_slug}': {final_score:.3f}")
+        return final_score
     
     def _extract_keywords(self, market_slug: str) -> List[str]:
         """
         Extrae keywords relevantes del market slug
         
-        Ejemplo:
-        'trump-win-2024' -> ['trump', 'win', '2024', 'election']
+        Ejemplos:
+        - "bitcoin-price-2024" -> ["bitcoin"]
+        - "trump-election-win" -> ["trump", "election"]
         """
-        # Limpiar y separar
-        keywords = re.sub(r'[^a-zA-Z0-9\s-]', '', market_slug)
-        keywords = keywords.replace('-', ' ').split()
+        # Limpiar y tokenizar
+        slug = market_slug.lower()
+        slug = re.sub(r'[^a-z\s-]', '', slug)
+        tokens = slug.split('-')
         
-        # Agregar contexto según keywords detectadas
-        context_map = {
-            'trump': ['trump', 'donald', 'maga', 'republican'],
-            'bitcoin': ['bitcoin', 'btc', 'crypto'],
-            'eth': ['ethereum', 'eth', 'vitalik'],
-            'election': ['election', 'vote', 'president'],
-        }
+        # Filtrar stopwords comunes
+        stopwords = {'will', 'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for',
+                     'by', 'price', 'market', '2024', '2025', '2026'}
+        keywords = [t for t in tokens if t not in stopwords and len(t) > 2]
         
-        expanded = set(keywords)
-        for kw in keywords:
-            if kw.lower() in context_map:
-                expanded.update(context_map[kw.lower()])
-        
-        return list(expanded)[:5]  # Top 5 keywords
+        return keywords[:3]  # Max 3 keywords
     
-    def _get_twitter_sentiment(self, keywords: List[str]) -> Optional[float]:
+    def _analyze_text(self, text: str) -> float:
         """
-        Obtiene sentiment de tweets recientes
+        Analiza sentiment de un texto usando TextBlob
         
         Returns:
-            Sentiment score [-1.0, 1.0] o None si error
+            Sentiment score [-1, 1]
         """
-        if not self.twitter_client or not self.vader:
-            return None
-        
         try:
-            # Buscar tweets recientes
-            query = ' OR '.join(keywords)
-            tweets = self.twitter_client.search_recent_tweets(
-                query=query,
-                max_results=100,
-                tweet_fields=['created_at', 'public_metrics']
-            )
+            # TextBlob sentiment
+            blob = TextBlob(text)
+            polarity = blob.sentiment.polarity
             
-            if not tweets.data:
-                return None
+            # Keyword boost
+            text_lower = text.lower()
+            positive_count = sum(1 for kw in self.positive_keywords if kw in text_lower)
+            negative_count = sum(1 for kw in self.negative_keywords if kw in text_lower)
             
-            sentiments = []
-            for tweet in tweets.data:
-                # VADER sentiment
-                scores = self.vader.polarity_scores(tweet.text)
-                sentiments.append(scores['compound'])
+            keyword_score = (positive_count - negative_count) * 0.1
             
-            return sum(sentiments) / len(sentiments) if sentiments else 0.0
+            # Combinar
+            final_score = polarity + keyword_score
+            return max(-1.0, min(1.0, final_score))
         
         except Exception as e:
-            logger.warning(f"⚠️ Twitter sentiment error: {e}")
-            return None
+            logger.warning(f"Error analyzing text: {e}")
+            return 0.0
     
-    def _get_news_sentiment(self, keywords: List[str]) -> Optional[float]:
+    def _get_news_sentiment(self, keywords: List[str]) -> float:
         """
-        Obtiene sentiment de noticias recientes
+        Obtiene sentiment de news relacionadas a los keywords
         
         Returns:
-            Sentiment score [-1.0, 1.0] o None si error
+            Average sentiment score [-1, 1]
         """
-        if not self.news_api_key or not self.vader:
+        sentiments = []
+        
+        # RSS feeds
+        for feed_url in self.news_feeds:
+            try:
+                feed = feedparser.parse(feed_url)
+                
+                for entry in feed.entries[:10]:  # Top 10 articles
+                    title = entry.get('title', '')
+                    summary = entry.get('summary', '')
+                    text = f"{title} {summary}"
+                    
+                    # Check si contiene keywords
+                    if any(kw in text.lower() for kw in keywords):
+                        sentiment = self._analyze_text(text)
+                        sentiments.append(sentiment)
+            
+            except Exception as e:
+                logger.debug(f"Error fetching feed {feed_url}: {e}")
+                continue
+        
+        # CryptoCompare API (si está configurado)
+        if self.cryptocompare_api_key:
+            try:
+                cc_sentiment = self._get_cryptocompare_sentiment(keywords)
+                if cc_sentiment is not None:
+                    sentiments.append(cc_sentiment)
+            except Exception as e:
+                logger.debug(f"Error with CryptoCompare API: {e}")
+        
+        # Calcular promedio
+        if sentiments:
+            return sum(sentiments) / len(sentiments)
+        
+        return 0.0
+    
+    def _get_cryptocompare_sentiment(self, keywords: List[str]) -> Optional[float]:
+        """
+        Obtiene sentiment de CryptoCompare News API
+        
+        Returns:
+            Sentiment score [-1, 1] o None si falla
+        """
+        if not self.cryptocompare_api_key:
             return None
         
         try:
-            # NewsAPI endpoint
-            url = 'https://newsapi.org/v2/everything'
+            url = "https://min-api.cryptocompare.com/data/v2/news/"
             params = {
-                'q': ' OR '.join(keywords),
-                'language': 'en',
-                'sortBy': 'publishedAt',
-                'pageSize': 50,
-                'apiKey': self.news_api_key
+                'api_key': self.cryptocompare_api_key,
+                'lang': 'EN',
+                'sortOrder': 'latest'
             }
             
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            articles = response.json().get('articles', [])
+            response = requests.get(url, params=params, timeout=5)
             
-            if not articles:
-                return None
-            
-            sentiments = []
-            for article in articles:
-                # Analizar título + descripción
-                text = f"{article.get('title', '')} {article.get('description', '')}"
-                scores = self.vader.polarity_scores(text)
-                sentiments.append(scores['compound'])
-            
-            return sum(sentiments) / len(sentiments) if sentiments else 0.0
+            if response.status_code == 200:
+                data = response.json()
+                articles = data.get('Data', [])
+                
+                sentiments = []
+                for article in articles[:20]:  # Top 20
+                    title = article.get('title', '')
+                    body = article.get('body', '')
+                    text = f"{title} {body}"
+                    
+                    # Check keywords
+                    if any(kw in text.lower() for kw in keywords):
+                        sentiment = self._analyze_text(text)
+                        sentiments.append(sentiment)
+                
+                if sentiments:
+                    return sum(sentiments) / len(sentiments)
         
         except Exception as e:
-            logger.warning(f"⚠️ News sentiment error: {e}")
-            return None
+            logger.debug(f"CryptoCompare API error: {e}")
+        
+        return None
     
-    def analyze_text(self, text: str) -> Dict:
+    def get_batch_sentiments(self, market_slugs: List[str]) -> Dict[str, float]:
         """
-        Analiza sentiment de un texto arbitrario
+        Obtiene sentiments para múltiples markets en batch
+        
+        Args:
+            market_slugs: Lista de market slugs
         
         Returns:
-            {
-                'score': float,       # Compound score [-1, 1]
-                'positive': float,    # Probabilidad positivo
-                'negative': float,    # Probabilidad negativo
-                'neutral': float,     # Probabilidad neutral
-                'label': str          # 'positive', 'negative', 'neutral'
-            }
+            Dict {market_slug: sentiment_score}
         """
-        if self.vader:
-            scores = self.vader.polarity_scores(text)
-            
-            # Clasificación
-            if scores['compound'] >= 0.05:
-                label = 'positive'
-            elif scores['compound'] <= -0.05:
-                label = 'negative'
-            else:
-                label = 'neutral'
-            
-            return {
-                'score': scores['compound'],
-                'positive': scores['pos'],
-                'negative': scores['neg'],
-                'neutral': scores['neu'],
-                'label': label
-            }
-        else:
-            return {
-                'score': 0.0,
-                'positive': 0.33,
-                'negative': 0.33,
-                'neutral': 0.34,
-                'label': 'neutral'
-            }
+        results = {}
+        
+        for slug in market_slugs:
+            results[slug] = self.get_market_sentiment(slug)
+        
+        return results
+    
+    def clear_cache(self):
+        """Limpia el cache de sentiments"""
+        self.cache.clear()
+        logger.info("✅ Sentiment cache cleared")

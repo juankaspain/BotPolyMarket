@@ -1,302 +1,338 @@
 #!/usr/bin/env python3
 """
 ROI Tracker v2.0
-Tracking y análisis de retornos de inversión
+Trackea ROI en tiempo real con métricas avanzadas
 """
 import logging
 import json
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-from pathlib import Path
+from dataclasses import dataclass, asdict
 import pandas as pd
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class Trade:
+    """Representa un trade ejecutado"""
+    id: str
+    market_slug: str
+    timestamp: datetime
+    entry_price: float
+    exit_price: Optional[float]
+    size: float  # USDC
+    roi: Optional[float]
+    gap_size: float
+    sentiment_score: float
+    ml_probability: float
+    status: str  # 'open', 'closed', 'failed'
+    
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d['timestamp'] = self.timestamp.isoformat()
+        return d
+
+@dataclass
+class PortfolioMetrics:
+    """Métricas del portfolio"""
+    total_capital: float
+    deployed_capital: float
+    available_capital: float
+    total_roi: float
+    win_rate: float
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    avg_roi_per_trade: float
+    sharpe_ratio: float
+    max_drawdown: float
+    current_drawdown: float
+    best_trade_roi: float
+    worst_trade_roi: float
+    avg_trade_duration: float  # hours
+    
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 class ROITracker:
     """
     Tracker de ROI con métricas avanzadas
     
     Features:
-    - Tracking de todos los trades
-    - Cálculo de métricas: win rate, ROI, Sharpe, drawdown
-    - Reportes diarios/semanales/mensuales
-    - Exportación a CSV/JSON
-    - Persistencia en SQLite
+    - ROI en tiempo real
+    - Win rate tracking
+    - Sharpe ratio
+    - Max drawdown
+    - Trade history con analytics
+    - Export a CSV/JSON
     """
     
-    def __init__(self, config: dict):
-        self.config = config
-        self.data_path = Path(config.get('roi_data_path', 'data/roi_tracking.json'))
-        self.data_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, initial_capital: float, db_path: str = 'data/trades.json'):
+        self.initial_capital = initial_capital
+        self.current_capital = initial_capital
+        self.db_path = db_path
+        self.trades: List[Trade] = []
+        self.daily_returns: List[float] = []
         
-        self.trades = []
-        self.initial_capital = config.get('initial_capital', 1000)
-        self.current_capital = self.initial_capital
-        
-        # Cargar datos históricos si existen
-        self.load_data()
+        # Load existing trades
+        self._load_trades()
     
-    def record_trade(self, trade_data: Dict):
+    def add_trade(self, trade: Trade):
         """
-        Registra un trade ejecutado
+        Añade un nuevo trade al tracker
         
         Args:
-            trade_data: {
-                'timestamp': datetime,
-                'market': str,
-                'side': str,  # 'BUY' o 'SELL'
-                'amount': float,
-                'entry_price': float,
-                'exit_price': float,  # Opcional, se actualiza al cerrar
-                'status': str,  # 'open', 'closed', 'cancelled'
-                'prediction': dict,  # De MLGapPredictor
-            }
+            trade: Trade object
         """
-        # Agregar metadata
-        trade_data['trade_id'] = len(self.trades) + 1
-        trade_data['timestamp'] = trade_data.get('timestamp', datetime.now())
+        self.trades.append(trade)
         
-        # Calcular ROI si está cerrado
-        if trade_data.get('status') == 'closed' and 'exit_price' in trade_data:
-            entry = trade_data['entry_price']
-            exit_price = trade_data['exit_price']
-            amount = trade_data['amount']
-            
-            if trade_data['side'] == 'BUY':
-                roi = (exit_price - entry) / entry
-            else:  # SELL
-                roi = (entry - exit_price) / entry
-            
-            profit = amount * roi
-            trade_data['roi'] = roi
-            trade_data['profit'] = profit
-            
-            # Actualizar capital
-            self.current_capital += profit
+        # Actualizar capital si el trade está cerrado
+        if trade.status == 'closed' and trade.roi is not None:
+            pnl = trade.size * trade.roi
+            self.current_capital += pnl
         
-        self.trades.append(trade_data)
-        self.save_data()
+        # Guardar
+        self._save_trades()
         
-        logger.info(f"✅ Trade #{trade_data['trade_id']} registrado")
+        logger.info(f"✅ Trade añadido: {trade.id} | ROI: {trade.roi:.2%} | Status: {trade.status}")
     
-    def close_trade(self, trade_id: int, exit_price: float):
+    def update_trade(self, trade_id: str, exit_price: float, status: str = 'closed'):
         """
-        Cierra un trade abierto
+        Actualiza un trade existente
         
         Args:
             trade_id: ID del trade
             exit_price: Precio de salida
+            status: Nuevo status
         """
         for trade in self.trades:
-            if trade['trade_id'] == trade_id and trade['status'] == 'open':
-                trade['exit_price'] = exit_price
-                trade['status'] = 'closed'
-                trade['exit_timestamp'] = datetime.now()
-                
-                # Calcular ROI
-                entry = trade['entry_price']
-                amount = trade['amount']
-                
-                if trade['side'] == 'BUY':
-                    roi = (exit_price - entry) / entry
-                else:
-                    roi = (entry - exit_price) / entry
-                
-                profit = amount * roi
-                trade['roi'] = roi
-                trade['profit'] = profit
-                
-                self.current_capital += profit
-                self.save_data()
-                
-                logger.info(f"✅ Trade #{trade_id} cerrado | ROI: {roi:+.2%} | Profit: ${profit:+.2f}")
-                return
+            if trade.id == trade_id:
+                if trade.status == 'open':
+                    # Calcular ROI
+                    trade.exit_price = exit_price
+                    trade.roi = (exit_price - trade.entry_price) / trade.entry_price
+                    trade.status = status
+                    
+                    # Actualizar capital
+                    pnl = trade.size * trade.roi
+                    self.current_capital += pnl
+                    
+                    # Track daily return
+                    self.daily_returns.append(trade.roi)
+                    
+                    self._save_trades()
+                    
+                    logger.info(f"✅ Trade actualizado: {trade_id} | ROI: {trade.roi:.2%}")
+                    return
         
-        logger.warning(f"⚠️ Trade #{trade_id} no encontrado o ya cerrado")
+        logger.warning(f"⚠️ Trade no encontrado: {trade_id}")
     
-    def get_metrics(self, period: str = 'all') -> Dict:
+    def get_metrics(self) -> PortfolioMetrics:
         """
-        Calcula métricas de performance
-        
-        Args:
-            period: 'all', 'daily', 'weekly', 'monthly'
+        Calcula métricas del portfolio
         
         Returns:
-            {
-                'total_trades': int,
-                'open_trades': int,
-                'closed_trades': int,
-                'winning_trades': int,
-                'losing_trades': int,
-                'win_rate': float,
-                'total_roi': float,
-                'avg_roi': float,
-                'total_profit': float,
-                'current_capital': float,
-                'sharpe_ratio': float,
-                'max_drawdown': float,
-                'profit_factor': float
-            }
+            PortfolioMetrics object
         """
-        # Filtrar trades por período
-        trades = self._filter_trades_by_period(period)
-        closed_trades = [t for t in trades if t['status'] == 'closed']
+        closed_trades = [t for t in self.trades if t.status == 'closed' and t.roi is not None]
+        open_trades = [t for t in self.trades if t.status == 'open']
         
-        if not closed_trades:
-            return self._empty_metrics()
+        # Basic metrics
+        total_trades = len(closed_trades)
+        winning_trades = len([t for t in closed_trades if t.roi > 0])
+        losing_trades = len([t for t in closed_trades if t.roi <= 0])
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
         
-        # Calcular métricas
-        rois = [t['roi'] for t in closed_trades]
-        profits = [t['profit'] for t in closed_trades]
+        # ROI metrics
+        total_roi = (self.current_capital - self.initial_capital) / self.initial_capital
+        avg_roi = np.mean([t.roi for t in closed_trades]) if closed_trades else 0.0
         
-        winning_trades = [t for t in closed_trades if t['roi'] > 0]
-        losing_trades = [t for t in closed_trades if t['roi'] <= 0]
+        # Capital metrics
+        deployed_capital = sum(t.size for t in open_trades)
+        available_capital = self.current_capital - deployed_capital
         
-        total_roi = sum(rois)
-        avg_roi = np.mean(rois)
-        total_profit = sum(profits)
-        win_rate = len(winning_trades) / len(closed_trades) if closed_trades else 0
+        # Risk metrics
+        sharpe = self._calculate_sharpe_ratio()
+        max_dd, current_dd = self._calculate_drawdowns()
         
-        # Sharpe Ratio (anualizado)
-        if len(rois) > 1:
-            sharpe = np.mean(rois) / (np.std(rois) + 1e-6) * np.sqrt(252)  # 252 trading days
-        else:
-            sharpe = 0
+        # Best/worst trades
+        best_roi = max([t.roi for t in closed_trades]) if closed_trades else 0.0
+        worst_roi = min([t.roi for t in closed_trades]) if closed_trades else 0.0
         
-        # Max Drawdown
-        cumulative = np.cumsum([0] + profits)
-        running_max = np.maximum.accumulate(cumulative)
-        drawdown = (cumulative - running_max) / (running_max + 1e-6)
-        max_drawdown = np.min(drawdown)
+        # Trade duration
+        durations = []
+        for t in closed_trades:
+            if hasattr(t, 'exit_timestamp'):
+                duration = (t.exit_timestamp - t.timestamp).total_seconds() / 3600
+                durations.append(duration)
+        avg_duration = np.mean(durations) if durations else 0.0
         
-        # Profit Factor
-        gross_profit = sum([t['profit'] for t in winning_trades]) if winning_trades else 0
-        gross_loss = abs(sum([t['profit'] for t in losing_trades])) if losing_trades else 1e-6
-        profit_factor = gross_profit / gross_loss
-        
-        return {
-            'total_trades': len(trades),
-            'open_trades': len([t for t in trades if t['status'] == 'open']),
-            'closed_trades': len(closed_trades),
-            'winning_trades': len(winning_trades),
-            'losing_trades': len(losing_trades),
-            'win_rate': win_rate,
-            'total_roi': total_roi,
-            'avg_roi': avg_roi,
-            'total_profit': total_profit,
-            'current_capital': self.current_capital,
-            'sharpe_ratio': sharpe,
-            'max_drawdown': max_drawdown,
-            'profit_factor': profit_factor
-        }
+        return PortfolioMetrics(
+            total_capital=self.current_capital,
+            deployed_capital=deployed_capital,
+            available_capital=available_capital,
+            total_roi=total_roi,
+            win_rate=win_rate,
+            total_trades=total_trades,
+            winning_trades=winning_trades,
+            losing_trades=losing_trades,
+            avg_roi_per_trade=avg_roi,
+            sharpe_ratio=sharpe,
+            max_drawdown=max_dd,
+            current_drawdown=current_dd,
+            best_trade_roi=best_roi,
+            worst_trade_roi=worst_roi,
+            avg_trade_duration=avg_duration
+        )
     
-    def _filter_trades_by_period(self, period: str) -> List[Dict]:
-        """Filtra trades por período"""
-        if period == 'all':
-            return self.trades
+    def _calculate_sharpe_ratio(self, risk_free_rate: float = 0.0) -> float:
+        """
+        Calcula Sharpe Ratio
         
-        now = datetime.now()
+        Returns:
+            Sharpe ratio (annualized)
+        """
+        if len(self.daily_returns) < 2:
+            return 0.0
         
-        if period == 'daily':
-            cutoff = now - timedelta(days=1)
-        elif period == 'weekly':
-            cutoff = now - timedelta(weeks=1)
-        elif period == 'monthly':
-            cutoff = now - timedelta(days=30)
-        else:
-            return self.trades
+        returns = np.array(self.daily_returns)
+        excess_returns = returns - risk_free_rate
         
-        return [t for t in self.trades if t['timestamp'] >= cutoff]
+        sharpe = np.mean(excess_returns) / (np.std(excess_returns) + 1e-6)
+        
+        # Annualize (asumiendo 365 trades/año)
+        sharpe_annual = sharpe * np.sqrt(365)
+        
+        return sharpe_annual
     
-    def _empty_metrics(self) -> Dict:
-        """Retorna métricas vacías"""
-        return {
-            'total_trades': 0,
-            'open_trades': 0,
-            'closed_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'win_rate': 0.0,
-            'total_roi': 0.0,
-            'avg_roi': 0.0,
-            'total_profit': 0.0,
-            'current_capital': self.current_capital,
-            'sharpe_ratio': 0.0,
-            'max_drawdown': 0.0,
-            'profit_factor': 0.0
-        }
-    
-    def export_to_csv(self, filepath: str):
-        """Exporta trades a CSV"""
-        df = pd.DataFrame(self.trades)
-        df.to_csv(filepath, index=False)
-        logger.info(f"✅ Datos exportados a {filepath}")
-    
-    def save_data(self):
-        """Guarda datos a JSON"""
-        data = {
-            'initial_capital': self.initial_capital,
-            'current_capital': self.current_capital,
-            'trades': self.trades
-        }
+    def _calculate_drawdowns(self) -> tuple[float, float]:
+        """
+        Calcula max drawdown y current drawdown
         
-        # Convertir datetime a string
-        for trade in data['trades']:
-            if isinstance(trade.get('timestamp'), datetime):
-                trade['timestamp'] = trade['timestamp'].isoformat()
-            if isinstance(trade.get('exit_timestamp'), datetime):
-                trade['exit_timestamp'] = trade['exit_timestamp'].isoformat()
+        Returns:
+            (max_drawdown, current_drawdown)
+        """
+        if not self.trades:
+            return 0.0, 0.0
         
-        with open(self.data_path, 'w') as f:
-            json.dump(data, f, indent=2)
+        # Construir equity curve
+        equity = [self.initial_capital]
+        
+        for trade in self.trades:
+            if trade.status == 'closed' and trade.roi is not None:
+                equity.append(equity[-1] + trade.size * trade.roi)
+        
+        equity = np.array(equity)
+        running_max = np.maximum.accumulate(equity)
+        drawdown = (equity - running_max) / running_max
+        
+        max_dd = np.min(drawdown)
+        current_dd = drawdown[-1]
+        
+        return float(max_dd), float(current_dd)
     
-    def load_data(self):
-        """Carga datos desde JSON"""
-        if not self.data_path.exists():
+    def get_trades_history(self, limit: int = 100) -> List[Dict]:
+        """
+        Obtiene historial de trades
+        
+        Args:
+            limit: Número máximo de trades a retornar
+        
+        Returns:
+            Lista de trades como dicts
+        """
+        trades = sorted(self.trades, key=lambda t: t.timestamp, reverse=True)
+        return [t.to_dict() for t in trades[:limit]]
+    
+    def export_to_csv(self, filepath: str = 'data/trades_export.csv'):
+        """
+        Exporta trades a CSV
+        
+        Args:
+            filepath: Path del archivo CSV
+        """
+        if not self.trades:
+            logger.warning("⚠️ No hay trades para exportar")
             return
         
+        df = pd.DataFrame([t.to_dict() for t in self.trades])
+        df.to_csv(filepath, index=False)
+        
+        logger.info(f"✅ Trades exportados a {filepath}")
+    
+    def get_performance_summary(self) -> str:
+        """
+        Genera un resumen de performance en texto
+        
+        Returns:
+            String con el resumen
+        """
+        metrics = self.get_metrics()
+        
+        summary = f"""
+📊 PERFORMANCE SUMMARY
+{'='*50}
+💰 Capital:
+   Initial: ${self.initial_capital:,.2f}
+   Current: ${metrics.total_capital:,.2f}
+   Total ROI: {metrics.total_roi:+.2%}
+
+📈 Trading Stats:
+   Total Trades: {metrics.total_trades}
+   Win Rate: {metrics.win_rate:.2%} ({metrics.winning_trades}W / {metrics.losing_trades}L)
+   Avg ROI/Trade: {metrics.avg_roi_per_trade:+.2%}
+   Best Trade: {metrics.best_trade_roi:+.2%}
+   Worst Trade: {metrics.worst_trade_roi:+.2%}
+
+⚠️ Risk Metrics:
+   Sharpe Ratio: {metrics.sharpe_ratio:.2f}
+   Max Drawdown: {metrics.max_drawdown:.2%}
+   Current Drawdown: {metrics.current_drawdown:.2%}
+
+💼 Capital Allocation:
+   Deployed: ${metrics.deployed_capital:,.2f} ({metrics.deployed_capital/metrics.total_capital:.1%})
+   Available: ${metrics.available_capital:,.2f}
+{'='*50}
+        """
+        
+        return summary
+    
+    def _save_trades(self):
+        """Guarda trades a archivo JSON"""
         try:
-            with open(self.data_path, 'r') as f:
-                data = json.load(f)
+            data = [t.to_dict() for t in self.trades]
             
-            self.initial_capital = data.get('initial_capital', self.initial_capital)
-            self.current_capital = data.get('current_capital', self.initial_capital)
-            self.trades = data.get('trades', [])
-            
-            # Convertir strings a datetime
-            for trade in self.trades:
-                if isinstance(trade.get('timestamp'), str):
-                    trade['timestamp'] = datetime.fromisoformat(trade['timestamp'])
-                if isinstance(trade.get('exit_timestamp'), str):
-                    trade['exit_timestamp'] = datetime.fromisoformat(trade['exit_timestamp'])
-            
-            logger.info(f"✅ Datos cargados: {len(self.trades)} trades")
+            with open(self.db_path, 'w') as f:
+                json.dump(data, f, indent=2)
         
         except Exception as e:
-            logger.error(f"❌ Error cargando datos: {e}")
+            logger.error(f"❌ Error guardando trades: {e}")
     
-    def print_summary(self, period: str = 'all'):
-        """Imprime resumen de métricas"""
-        metrics = self.get_metrics(period)
+    def _load_trades(self):
+        """Carga trades desde archivo JSON"""
+        try:
+            with open(self.db_path, 'r') as f:
+                data = json.load(f)
+            
+            self.trades = []
+            for item in data:
+                item['timestamp'] = datetime.fromisoformat(item['timestamp'])
+                if item.get('exit_timestamp'):
+                    item['exit_timestamp'] = datetime.fromisoformat(item['exit_timestamp'])
+                
+                trade = Trade(**item)
+                self.trades.append(trade)
+            
+            # Recalcular capital
+            self.current_capital = self.initial_capital
+            for trade in self.trades:
+                if trade.status == 'closed' and trade.roi is not None:
+                    self.current_capital += trade.size * trade.roi
+            
+            logger.info(f"✅ {len(self.trades)} trades cargados desde {self.db_path}")
         
-        print(f"\n{'='*60}")
-        print(f"ROI TRACKER - RESUMEN {period.upper()}")
-        print(f"{'='*60}")
-        print(f"\n📊 TRADES")
-        print(f"  Total: {metrics['total_trades']}")
-        print(f"  Abiertos: {metrics['open_trades']}")
-        print(f"  Cerrados: {metrics['closed_trades']}")
-        print(f"  Ganadores: {metrics['winning_trades']}")
-        print(f"  Perdedores: {metrics['losing_trades']}")
-        print(f"  Win Rate: {metrics['win_rate']:.1%}")
-        print(f"\n💰 PERFORMANCE")
-        print(f"  ROI Total: {metrics['total_roi']:+.2%}")
-        print(f"  ROI Promedio: {metrics['avg_roi']:+.2%}")
-        print(f"  Profit Total: ${metrics['total_profit']:+,.2f}")
-        print(f"  Capital Actual: ${metrics['current_capital']:,.2f}")
-        print(f"\n📈 MÉTRICAS AVANZADAS")
-        print(f"  Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-        print(f"  Max Drawdown: {metrics['max_drawdown']:.2%}")
-        print(f"  Profit Factor: {metrics['profit_factor']:.2f}")
-        print(f"\n{'='*60}\n")
+        except FileNotFoundError:
+            logger.info("📝 No hay archivo de trades previo, iniciando nuevo tracker")
+        except Exception as e:
+            logger.error(f"❌ Error cargando trades: {e}")

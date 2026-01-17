@@ -1,218 +1,258 @@
 #!/usr/bin/env python3
 """
 Telegram Notifier v2.0
-Envía alertas y reportes de ROI via Telegram
+Envía alertas de gaps y métricas de ROI a Telegram
 """
 import logging
 from typing import Dict, Optional
+import requests
 from datetime import datetime
-import asyncio
-
-try:
-    from telegram import Bot
-    from telegram.error import TelegramError
-    TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 class TelegramNotifier:
     """
-    Notificador de Telegram para alertas y reportes
+    Notificador de Telegram para alertas del bot
     
-    Features:
-    - Alertas de gaps detectados
-    - Reportes de ROI diarios/semanales
-    - Alertas de trades ejecutados
-    - Notificaciones de errores críticos
+    Tipos de alertas:
+    - Gap detectado (con ML probability)
+    - Trade ejecutado
+    - Trade cerrado (con ROI)
+    - Métricas diarias
+    - Errores críticos
     """
     
     def __init__(self, config: dict):
-        self.config = config
-        self.bot_token = config.get('telegram_bot_token')
-        self.chat_id = config.get('telegram_chat_id')
-        self.enabled = config.get('telegram_enabled', False)
-        self.bot = None
+        self.bot_token = config.get('telegram_bot_token', '')
+        self.chat_id = config.get('telegram_chat_id', '')
+        self.enabled = bool(self.bot_token and self.chat_id)
+        self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         
-        if not TELEGRAM_AVAILABLE:
-            logger.warning("⚠️ python-telegram-bot no disponible. Instalar: pip install python-telegram-bot")
-            self.enabled = False
-            return
-        
-        if self.enabled and self.bot_token and self.chat_id:
-            try:
-                self.bot = Bot(token=self.bot_token)
-                logger.info("✅ Telegram bot inicializado")
-            except Exception as e:
-                logger.error(f"❌ Error inicializando Telegram bot: {e}")
-                self.enabled = False
+        if not self.enabled:
+            logger.warning("⚠️ Telegram notifier deshabilitado (falta token o chat_id)")
         else:
-            logger.info("ℹ️ Telegram notifier deshabilitado")
+            logger.info("✅ Telegram notifier habilitado")
     
-    async def send_message(self, message: str, parse_mode: str = 'HTML') -> bool:
+    def send_message(self, message: str, parse_mode: str = 'HTML'):
         """
         Envía un mensaje a Telegram
         
         Args:
-            message: Texto del mensaje (soporta HTML o Markdown)
+            message: Texto del mensaje
             parse_mode: 'HTML' o 'Markdown'
-        
-        Returns:
-            True si éxito, False si error
-        """
-        if not self.enabled or not self.bot:
-            return False
-        
-        try:
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=message,
-                parse_mode=parse_mode
-            )
-            return True
-        except TelegramError as e:
-            logger.error(f"❌ Error enviando mensaje Telegram: {e}")
-            return False
-    
-    def send_message_sync(self, message: str, parse_mode: str = 'HTML') -> bool:
-        """
-        Versión síncrona de send_message
         """
         if not self.enabled:
-            return False
+            return
         
         try:
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self.send_message(message, parse_mode))
-        except RuntimeError:
-            # Si no hay event loop, crear uno nuevo
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(self.send_message(message, parse_mode))
-            loop.close()
-            return result
+            payload = {
+                'chat_id': self.chat_id,
+                'text': message,
+                'parse_mode': parse_mode
+            }
+            
+            response = requests.post(self.api_url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                logger.debug("✅ Mensaje enviado a Telegram")
+            else:
+                logger.warning(f"⚠️ Error enviando mensaje: {response.status_code}")
+        
+        except Exception as e:
+            logger.error(f"❌ Error con Telegram API: {e}")
     
-    def send_gap_alert(self, gap_data: Dict) -> bool:
+    def notify_gap_detected(self, gap_data: Dict):
         """
-        Envía alerta de gap detectado
+        Notifica un gap detectado
         
         Args:
             gap_data: {
-                'market': str,
+                'market_slug': str,
                 'gap_size': float,
-                'prediction': dict,  # De MLGapPredictor
-                'timestamp': datetime
+                'ml_probability': float,
+                'sentiment': float,
+                'recommendation': str
             }
         """
-        prediction = gap_data.get('prediction', {})
-        prob = prediction.get('probability', 0)
-        confidence = prediction.get('confidence', 'N/A')
-        sentiment = prediction.get('sentiment', 0)
+        market = gap_data.get('market_slug', 'Unknown')
+        gap_size = gap_data.get('gap_size', 0)
+        ml_prob = gap_data.get('ml_probability', 0)
+        sentiment = gap_data.get('sentiment', 0)
+        recommendation = gap_data.get('recommendation', 'SKIP')
         
-        # Emoji según confianza
-        emoji = '🟢' if confidence == 'HIGH' else '🟡' if confidence == 'MEDIUM' else '🔴'
+        # Emoji según recommendation
+        emoji = '🟢' if recommendation == 'EXECUTE' else '🟡'
         
         message = f"""
-{emoji} <b>GAP DETECTADO</b> {emoji}
+{emoji} <b>GAP DETECTADO</b>
 
-<b>Mercado:</b> {gap_data.get('market', 'N/A')}
-<b>Gap Size:</b> {gap_data.get('gap_size', 0):.2f}¢
-<b>Probabilidad:</b> {prob:.1%}
-<b>Confianza:</b> {confidence}
-<b>Sentiment:</b> {sentiment:+.2f}
-<b>Recomendación:</b> {prediction.get('recommendation', 'N/A')}
+📊 Market: <code>{market}</code>
+💰 Gap Size: <b>{gap_size:.1f}¢</b>
+🤖 ML Probability: <b>{ml_prob:.1%}</b>
+😊 Sentiment: <b>{sentiment:+.2f}</b>
 
-⏰ {gap_data.get('timestamp', datetime.now()).strftime('%Y-%m-%d %H:%M:%S')}
+✅ Recommendation: <b>{recommendation}</b>
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """
         
-        return self.send_message_sync(message)
+        self.send_message(message)
     
-    def send_trade_execution(self, trade_data: Dict) -> bool:
+    def notify_trade_executed(self, trade_data: Dict):
         """
-        Envía notificación de trade ejecutado
+        Notifica un trade ejecutado
         
         Args:
             trade_data: {
-                'market': str,
-                'side': str,  # 'BUY' o 'SELL'
-                'amount': float,
-                'price': float,
-                'expected_roi': float
+                'id': str,
+                'market_slug': str,
+                'entry_price': float,
+                'size': float,
+                'ml_probability': float
             }
         """
+        trade_id = trade_data.get('id', 'Unknown')
+        market = trade_data.get('market_slug', 'Unknown')
+        entry = trade_data.get('entry_price', 0)
+        size = trade_data.get('size', 0)
+        ml_prob = trade_data.get('ml_probability', 0)
+        
         message = f"""
-💰 <b>TRADE EJECUTADO</b>
+🚀 <b>TRADE EJECUTADO</b>
 
-<b>Mercado:</b> {trade_data.get('market', 'N/A')}
-<b>Acción:</b> {trade_data.get('side', 'N/A')}
-<b>Cantidad:</b> ${trade_data.get('amount', 0):.2f}
-<b>Precio:</b> {trade_data.get('price', 0):.4f}
-<b>ROI Esperado:</b> {trade_data.get('expected_roi', 0):.1%}
+🆔 ID: <code>{trade_id}</code>
+📊 Market: <code>{market}</code>
+💵 Entry: <b>${entry:.4f}</b>
+💰 Size: <b>${size:.2f} USDC</b>
+🤖 ML Confidence: <b>{ml_prob:.1%}</b>
 
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+⏳ Esperando cierre...
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """
         
-        return self.send_message_sync(message)
+        self.send_message(message)
     
-    def send_roi_report(self, report_data: Dict) -> bool:
+    def notify_trade_closed(self, trade_data: Dict):
         """
-        Envía reporte diario/semanal de ROI
+        Notifica un trade cerrado
         
         Args:
-            report_data: {
-                'period': str,  # 'daily', 'weekly'
-                'total_trades': int,
-                'winning_trades': int,
-                'win_rate': float,
-                'total_roi': float,
-                'total_profit': float,
-                'capital': float,
-                'sharpe_ratio': float
+            trade_data: {
+                'id': str,
+                'market_slug': str,
+                'entry_price': float,
+                'exit_price': float,
+                'roi': float,
+                'size': float,
+                'pnl': float
             }
         """
-        period = report_data.get('period', 'daily').upper()
-        win_rate = report_data.get('win_rate', 0)
-        roi = report_data.get('total_roi', 0)
+        trade_id = trade_data.get('id', 'Unknown')
+        market = trade_data.get('market_slug', 'Unknown')
+        entry = trade_data.get('entry_price', 0)
+        exit_price = trade_data.get('exit_price', 0)
+        roi = trade_data.get('roi', 0)
+        size = trade_data.get('size', 0)
+        pnl = trade_data.get('pnl', 0)
         
-        # Emoji según performance
-        emoji = '🚀' if roi > 0.1 else '📈' if roi > 0 else '📉'
+        # Emoji según resultado
+        emoji = '✅' if roi > 0 else '❌'
         
         message = f"""
-{emoji} <b>REPORTE {period}</b> {emoji}
+{emoji} <b>TRADE CERRADO</b>
 
-<b>📊 Trades</b>
-• Total: {report_data.get('total_trades', 0)}
-• Ganadores: {report_data.get('winning_trades', 0)}
-• Win Rate: {win_rate:.1%}
+🆔 ID: <code>{trade_id}</code>
+📊 Market: <code>{market}</code>
 
-<b>💰 Performance</b>
-• ROI: {roi:+.2%}
-• Profit: ${report_data.get('total_profit', 0):+,.2f}
-• Capital: ${report_data.get('capital', 0):,.2f}
-• Sharpe: {report_data.get('sharpe_ratio', 0):.2f}
+💵 Entry: ${entry:.4f}
+💵 Exit: ${exit_price:.4f}
+📈 ROI: <b>{roi:+.2%}</b>
+💰 P&L: <b>${pnl:+.2f} USDC</b>
 
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+📦 Size: ${size:.2f}
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """
         
-        return self.send_message_sync(message)
+        self.send_message(message)
     
-    def send_error_alert(self, error_msg: str, context: str = '') -> bool:
+    def notify_daily_summary(self, metrics: Dict):
         """
-        Envía alerta de error crítico
+        Envía resumen diario de métricas
+        
+        Args:
+            metrics: PortfolioMetrics dict
+        """
+        total_capital = metrics.get('total_capital', 0)
+        total_roi = metrics.get('total_roi', 0)
+        win_rate = metrics.get('win_rate', 0)
+        total_trades = metrics.get('total_trades', 0)
+        winning = metrics.get('winning_trades', 0)
+        losing = metrics.get('losing_trades', 0)
+        sharpe = metrics.get('sharpe_ratio', 0)
+        max_dd = metrics.get('max_drawdown', 0)
+        
+        message = f"""
+📊 <b>RESUMEN DIARIO</b>
+{'='*30}
+
+💰 Capital Total: <b>${total_capital:,.2f}</b>
+📈 ROI Total: <b>{total_roi:+.2%}</b>
+
+🎯 Win Rate: <b>{win_rate:.1%}</b>
+📊 Trades: {total_trades} ({winning}W / {losing}L)
+
+⚠️ Sharpe: <b>{sharpe:.2f}</b>
+📉 Max DD: <b>{max_dd:.2%}</b>
+
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*30}
+        """
+        
+        self.send_message(message)
+    
+    def notify_error(self, error_msg: str, context: Optional[str] = None):
+        """
+        Notifica un error crítico
         
         Args:
             error_msg: Mensaje de error
-            context: Contexto adicional
+            context: Contexto adicional (opcional)
         """
+        context_str = f"\n\n📝 Context: <code>{context}</code>" if context else ""
+        
         message = f"""
-🚨 <b>ERROR CRÍTICO</b> 🚨
+🚨 <b>ERROR CRÍTICO</b>
 
-<b>Error:</b> {error_msg}
+❌ {error_msg}{context_str}
 
-{f'<b>Contexto:</b> {context}' if context else ''}
-
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """
         
-        return self.send_message_sync(message)
+        self.send_message(message)
+    
+    def notify_milestone(self, milestone: str, value: float):
+        """
+        Notifica un milestone alcanzado
+        
+        Args:
+            milestone: Tipo de milestone ('roi', 'capital', 'win_rate', etc.)
+            value: Valor alcanzado
+        """
+        emoji_map = {
+            'roi': '🎯',
+            'capital': '💰',
+            'win_rate': '🏆',
+            'trades': '📊'
+        }
+        
+        emoji = emoji_map.get(milestone, '🎉')
+        
+        message = f"""
+{emoji} <b>MILESTONE ALCANZADO!</b>
+
+🎊 {milestone.upper()}: <b>{value}</b>
+
+🚀 Keep going!
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+        
+        self.send_message(message)
