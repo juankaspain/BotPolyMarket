@@ -92,4 +92,90 @@ class RiskManager:
         
         # 3. Check tamaño de posición
         if size > self.limits.max_position_value:
-            return False, f"Tamaño de posición excede límite (${size:.2f} > ${self.limits.max_
+            return False, f"Tamaño de posición excede límite (${size:.2f} > ${self.limits.max_position_value:,.2f})"
+        
+        # 4. Check pérdida diaria
+        if abs(self.daily_pnl) >= self.limits.max_daily_loss_value:
+            return False, f"Límite de pérdida diaria alcanzado (${self.daily_pnl:.2f})"
+        
+        # 5. Check drawdown
+        if self.current_drawdown >= self.limits.max_drawdown_value:
+            return False, f"Drawdown máximo alcanzado (${self.current_drawdown:.2f})"
+        
+        return True, "OK"
+    
+    # ==================== GESTIÓN DE POSICIONES ====================
+    
+    def register_position(self, position_id: str, strategy: str, market_id: str, size: float, entry_price: float):
+        """Registra una nueva posición"""
+        self.active_positions[position_id] = {
+            'strategy': strategy,
+            'market_id': market_id,
+            'size': size,
+            'entry_price': entry_price,
+            'current_price': entry_price,
+            'pnl': 0.0,
+            'opened_at': datetime.now()
+        }
+        
+        if strategy not in self.positions_by_strategy:
+            self.positions_by_strategy[strategy] = []
+        self.positions_by_strategy[strategy].append(position_id)
+        
+        self.daily_trades += 1
+        logger.info(f"Position registered: {position_id} - {strategy} - ${size:.2f}")
+    
+    def close_position(self, position_id: str, exit_price: float, realized_pnl: float):
+        """Cierra una posición y actualiza el capital"""
+        if position_id not in self.active_positions:
+            logger.warning(f"Position {position_id} not found")
+            return
+        
+        position = self.active_positions[position_id]
+        strategy = position['strategy']
+        
+        # Actualizar PnL
+        self.daily_pnl += realized_pnl
+        self.current_capital += realized_pnl
+        
+        # Actualizar peak capital y drawdown
+        if self.current_capital > self.peak_capital:
+            self.peak_capital = self.current_capital
+            self.current_drawdown = 0.0
+        else:
+            self.current_drawdown = self.peak_capital - self.current_capital
+        
+        # Remover posición
+        del self.active_positions[position_id]
+        if strategy in self.positions_by_strategy:
+            self.positions_by_strategy[strategy].remove(position_id)
+        
+        logger.info(f"Position closed: {position_id} - PnL: ${realized_pnl:.2f} - Capital: ${self.current_capital:.2f}")
+    
+    def update_position_price(self, position_id: str, current_price: float):
+        """Actualiza el precio actual de una posición"""
+        if position_id in self.active_positions:
+            position = self.active_positions[position_id]
+            position['current_price'] = current_price
+            
+            # Calcular PnL no realizado
+            entry_price = position['entry_price']
+            size = position['size']
+            position['pnl'] = (current_price - entry_price) * size
+    
+    def get_status(self) -> Dict:
+        """Retorna el estado actual del risk manager"""
+        return {
+            'current_capital': self.current_capital,
+            'daily_pnl': self.daily_pnl,
+            'daily_trades': self.daily_trades,
+            'active_positions': len(self.active_positions),
+            'current_drawdown': self.current_drawdown,
+            'drawdown_pct': (self.current_drawdown / self.peak_capital * 100) if self.peak_capital > 0 else 0
+        }
+    
+    def reset_daily_stats(self):
+        """Resetea las estadísticas diarias (llamar al inicio de cada día)"""
+        self.daily_pnl = 0.0
+        self.daily_trades = 0
+        logger.info("Daily stats reset")
