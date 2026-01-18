@@ -1,0 +1,127 @@
+# FASE 1 Configuration
+# BotPolyMarket - Optimized Settings
+# Updated: 18 Enero 2026
+
+# Trading Configuration
+trading:
+  mode: paper  # 'paper' or 'live'
+  bankroll: 10000  # USD
+  max_concurrent_positions: 10
+  
+# Kelly Criterion
+kelly:
+  fraction: 0.5  # Half Kelly (recommended)
+  max_position_pct: 0.10  # Max 10% per position
+  min_position_usd: 10
+  max_position_usd: 1000
+  adaptive: true  # Adjust based on performance
+
+# Gap Strategies (OPTIMIZED)
+gap_strategies:
+  # Global settings
+  min_gap_size: 0.015  # 1.5% (reduced from 2%)
+  min_confidence: 60   # 60% threshold
+  
+  # Strategy-specific
+  fair_value_gap:
+    enabled: true
+    min_gap: 0.015  # 1.5%
+    volume_multiplier: 1.5
+    risk_reward: 3.0
+    
+  cross_market_arbitrage:
+    enabled: true
+    min_gap: 0.03  # 3% (reduced from 5%)
+    exchanges: [kalshi, betfair]
+    include_fees: true
+    polymarket_fee: 0.02
+    kalshi_fee: 0.07
+    
+  btc_lag:
+    enabled: true
+    min_lag: 0.008  # 0.8% (reduced from 1%)
+    timeframe: 5min  # Fast execution
+    source: binance
+    
+  opening_gap:
+    enabled: true
+    min_gap: 0.015
+    fill_expectation: 0.5
+    
+  exhaustion_gap:
+    enabled: true
+    min_price_change: 0.15
+    use_rsi: true
+    rsi_threshold: 70
+    
+  runaway_continuation:
+    enabled: true
+    min_trend_strength: 0.10
+    use_adx: true
+    
+  volume_confirmation:
+    enabled: true
+    volume_thresholds:
+      crypto: 1.5
+      sports: 2.0
+      politics: 2.5
+      new_markets: 3.0
+      
+  correlation_gap:
+    enabled: true
+    min_correlation: 0.9
+    min_divergence: 5.0
+    
+  news_catalyst:
+    enabled: false  # FASE 2 (requires NewsAPI)
+    time_window: 7200  # 2 hours
+    
+  multi_choice_arbitrage:
+    enabled: true
+    min_total_prob: 1.01  # >101%
+    instant_execution: true
+
+# API Configuration
+apis:
+  polymarket:
+    rest_url: https://clob.polymarket.com
+    ws_url: wss://ws-subscriptions-clob.polymarket.com/ws/market
+    gamma_url: https://gamma-api.polymarket.com
+    chain_id: 137  # Polygon
+    
+  binance:
+    use_testnet: false
+    rate_limit: true
+    
+  kalshi:
+    base_url: https://api.elections.kalshi.com/trade-api/v2
+    
+  coinbase:
+    base_url: https://api.coinbase.com/v2
+
+# WebSocket Configuration
+websockets:
+  enabled: true
+  max_connections: 50
+  reconnect_delay: 5
+  ping_interval: 30
+  
+# Monitoring & Logging
+monitoring:
+  log_level: INFO
+  telegram_alerts: true
+  save_trades: true
+  
+# Risk Management
+risk:
+  max_drawdown_pct: 0.20  # 20%
+  stop_loss_global: true
+  max_daily_loss: 0.05  # 5% of bankroll
+  correlation_limit: 0.7  # Max correlation between positions
+  
+# Backtesting
+backtest:
+  enabled: false
+  start_date: 2025-12-18
+  end_date: 2026-01-18
+  initial_capital: 10000
