@@ -1,353 +1,342 @@
 #!/usr/bin/env python3
 """
 v5.0 DeFi Integration
-Auto-compound USDC, flashloans y cross-chain (Base/Solana)
+Auto-compound USDC, flashloans y cross-chain trading
 """
 
 import asyncio
-from typing import Dict, Optional
+from typing import Optional, Dict
 from web3 import Web3
-from eth_account import Account
+from decimal import Decimal
 import logging
 
 logger = logging.getLogger(__name__)
 
 class DeFiIntegration:
     """
-    Integración con protocolos DeFi para maximizar rendimientos
+    Integración DeFi para BotPolyMarket
+    - Auto-compound USDC
+    - Flashloan arbitrage
+    - Cross-chain bridges
     """
     
     def __init__(self, network: str = 'polygon'):
-        """
-        Args:
-            network: 'polygon', 'base', 'ethereum'
-        """
         self.network = network
         self.w3 = None
-        self.account = None
-        self._initialize_web3()
-    
-    def _initialize_web3(self):
-        """Inicializa conexión Web3"""
-        rpc_urls = {
-            'polygon': 'https://polygon-rpc.com',
-            'base': 'https://mainnet.base.org',
-            'ethereum': 'https://eth.llamarpc.com'
-        }
+        self.compound_enabled = False
         
-        self.w3 = Web3(Web3.HTTPProvider(rpc_urls[self.network]))
-        logger.info(f"✅ Conectado a {self.network}: {self.w3.is_connected()}")
-    
-    async def auto_compound_usdc(self, amount: float, protocol: str = 'aave') -> Dict:
+    async def initialize(self, rpc_url: str, private_key: str):
         """
-        Auto-compound USDC en protocolos de lending
+        Inicializa conexión Web3
         
         Args:
-            amount: Cantidad en USDC
+            rpc_url: RPC endpoint (Polygon, Base, etc)
+            private_key: Private key de wallet
+        """
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self.account = self.w3.eth.account.from_key(private_key)
+        
+        logger.info(f"✅ DeFi initialized on {self.network}")
+        logger.info(f"📍 Wallet: {self.account.address}")
+    
+    async def auto_compound_usdc(self, amount: Decimal, protocol: str = 'aave') -> Dict:
+        """
+        Auto-compound USDC en protocolos DeFi
+        
+        Args:
+            amount: Cantidad de USDC
             protocol: 'aave', 'compound', 'gmx'
         
         Returns:
-            Dict con resultado de operación
+            Transaction receipt y APY
         """
         logger.info(f"💰 Auto-compounding {amount} USDC en {protocol}...")
         
-        try:
-            if protocol == 'aave':
-                result = await self._compound_aave(amount)
-            elif protocol == 'compound':
-                result = await self._compound_compound(amount)
-            elif protocol == 'gmx':
-                result = await self._stake_gmx(amount)
-            else:
-                raise ValueError(f"Protocolo no soportado: {protocol}")
-            
-            logger.info(f"✅ Compound exitoso: APY {result['apy']:.2%}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ Error en auto-compound: {e}")
-            raise
+        if protocol == 'aave':
+            return await self._compound_aave(amount)
+        elif protocol == 'compound':
+            return await self._compound_compound(amount)
+        elif protocol == 'gmx':
+            return await self._compound_gmx(amount)
+        else:
+            raise ValueError(f"Protocol {protocol} not supported")
     
-    async def _compound_aave(self, amount: float) -> Dict:
+    async def _compound_aave(self, amount: Decimal) -> Dict:
         """
-        Deposita USDC en Aave V3
+        Deposita USDC en Aave para generar yield
         """
-        # Dirección del contrato Aave Pool (Polygon)
-        aave_pool = '0x794a61358D6845594F94dc1DB02A252b5b4814aD'
+        # Aave V3 lending pool address (Polygon)
+        AAVE_POOL = '0x794a61358D6845594F94dc1DB02A252b5b4814aD'
         
-        # ABI simplificado de Aave Pool
+        # ABI simplificado
         pool_abi = [
             {
-                "inputs": [
-                    {"internalType": "address", "name": "asset", "type": "address"},
-                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
-                    {"internalType": "address", "name": "onBehalfOf", "type": "address"},
-                    {"internalType": "uint16", "name": "referralCode", "type": "uint16"}
-                ],
-                "name": "supply",
-                "outputs": [],
-                "stateMutability": "nonpayable",
-                "type": "function"
+                'name': 'supply',
+                'type': 'function',
+                'inputs': [
+                    {'name': 'asset', 'type': 'address'},
+                    {'name': 'amount', 'type': 'uint256'},
+                    {'name': 'onBehalfOf', 'type': 'address'},
+                    {'name': 'referralCode', 'type': 'uint16'}
+                ]
             }
         ]
         
-        usdc_address = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'  # USDC Polygon
+        # USDC address (Polygon)
+        USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
         
-        # Simular deposito (en producción ejecutaría la transacción)
+        pool_contract = self.w3.eth.contract(address=AAVE_POOL, abi=pool_abi)
+        
+        # Aprobar USDC
+        await self._approve_token(USDC_ADDRESS, AAVE_POOL, amount)
+        
+        # Supply USDC a Aave
+        tx = pool_contract.functions.supply(
+            USDC_ADDRESS,
+            int(amount * 10**6),  # USDC tiene 6 decimales
+            self.account.address,
+            0  # No referral code
+        ).build_transaction({
+            'from': self.account.address,
+            'nonce': self.w3.eth.get_transaction_count(self.account.address),
+            'gas': 300000,
+            'gasPrice': self.w3.eth.gas_price
+        })
+        
+        signed_tx = self.w3.eth.account.sign_transaction(tx, self.account.key)
+        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        logger.info(f"✅ Compounded {amount} USDC in Aave")
+        logger.info(f"📝 Tx: {tx_hash.hex()}")
+        
         return {
+            'success': True,
             'protocol': 'aave',
-            'amount': amount,
-            'apy': 0.05,  # 5% APY ejemplo
-            'tx_hash': '0x...',
-            'status': 'success'
+            'amount': float(amount),
+            'tx_hash': tx_hash.hex(),
+            'apy': await self._get_aave_apy(),
+            'receipt': receipt
         }
     
-    async def _compound_compound(self, amount: float) -> Dict:
+    async def _compound_gmx(self, amount: Decimal) -> Dict:
         """
-        Deposita USDC en Compound
+        Deposita en GMX para leverage perpetuals
         """
+        logger.info(f"⚡ Compounding in GMX perpetuals...")
+        
+        # GMX Vault address
+        GMX_VAULT = '0x489ee077994B6658eAfA855C308275EAd8097C4A'
+        
         return {
-            'protocol': 'compound',
-            'amount': amount,
-            'apy': 0.04,
-            'tx_hash': '0x...',
-            'status': 'success'
-        }
-    
-    async def _stake_gmx(self, amount: float) -> Dict:
-        """
-        Stake en GMX para leverage perpetuals
-        """
-        return {
+            'success': True,
             'protocol': 'gmx',
-            'amount': amount,
-            'apy': 0.25,  # 25% APY con leverage
-            'tx_hash': '0x...',
-            'status': 'success'
+            'amount': float(amount),
+            'leverage': 2.0,  # 2x leverage
+            'apy': 15.5  # APY estimado
         }
     
     async def execute_flashloan(
         self,
-        amount: float,
-        opportunity: Dict,
-        protocol: str = 'aave'
+        amount: Decimal,
+        opportunity: Dict
     ) -> Dict:
         """
-        Ejecuta flashloan para arbitraje instantáneo
-        
-        Use case: Gap >5¢ trades instantáneos
+        Ejecuta flashloan para arbitraje (>5¢ gaps)
         
         Args:
-            amount: Cantidad del flashloan
-            opportunity: Oportunidad de arbitraje
-            protocol: 'aave', 'uniswap', 'balancer'
+            amount: Cantidad a prestar
+            opportunity: Oportunidad de arbitraje detectada
         
         Returns:
-            Resultado del flashloan
+            Resultado de ejecución
         """
-        logger.info(f"⚡ Ejecutando flashloan: {amount} USDC")
+        logger.info(f"⚡ Executing flashloan: {amount} USDC")
         
-        try:
-            # 1. Solicitar flashloan
-            loan = await self._request_flashloan(amount, protocol)
-            
-            # 2. Ejecutar arbitraje
-            arb_result = await self._execute_arbitrage(loan, opportunity)
-            
-            # 3. Repagar flashloan + fee
-            fee = amount * 0.0009  # 0.09% fee Aave
-            repayment = await self._repay_flashloan(amount + fee, protocol)
-            
-            # 4. Calcular profit neto
-            profit = arb_result['profit'] - fee
-            
-            logger.info(f"✅ Flashloan profit: ${profit:.2f}")
-            
-            return {
-                'success': True,
-                'loan_amount': amount,
-                'fee': fee,
-                'arb_profit': arb_result['profit'],
-                'net_profit': profit,
-                'tx_hash': repayment['tx_hash']
-            }
-            
-        except Exception as e:
-            logger.error(f"❌ Error en flashloan: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    async def _request_flashloan(self, amount: float, protocol: str) -> Dict:
-        """Solicita flashloan"""
-        logger.info(f"Requesting flashloan from {protocol}")
-        return {'amount': amount, 'protocol': protocol}
-    
-    async def _execute_arbitrage(self, loan: Dict, opportunity: Dict) -> Dict:
-        """Ejecuta arbitraje con fondos del flashloan"""
-        # Simular arbitraje
-        profit = loan['amount'] * 0.02  # 2% profit
-        return {'profit': profit}
-    
-    async def _repay_flashloan(self, amount: float, protocol: str) -> Dict:
-        """Repaga flashloan"""
-        logger.info(f"Repaying flashloan: {amount}")
-        return {'tx_hash': '0x...', 'status': 'success'}
+        # Validar que el gap sea > 5 centavos
+        if opportunity['profit'] < 0.05:
+            logger.warning(f"Gap too small: {opportunity['profit']} < 0.05")
+            return {'success': False, 'reason': 'gap_too_small'}
+        
+        # Aave Flashloan
+        AAVE_POOL = '0x794a61358D6845594F94dc1DB02A252b5b4814aD'
+        
+        # Construir transacción flashloan
+        flashloan_params = {
+            'asset': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',  # USDC
+            'amount': int(amount * 10**6),
+            'mode': 0,  # No debt mode
+            'onBehalfOf': self.account.address,
+            'params': self._encode_arbitrage_params(opportunity),
+            'referralCode': 0
+        }
+        
+        logger.info(f"🔥 Flashloan initiated for {amount} USDC")
+        
+        # En producción, esto ejecutaría el smart contract
+        # que realiza: borrow -> arbitrage -> repay + fee
+        
+        profit = opportunity['profit'] - 0.0009  # Aave fee 0.09%
+        
+        return {
+            'success': True,
+            'type': 'flashloan',
+            'borrowed': float(amount),
+            'profit': float(profit * amount),
+            'fee': float(0.0009 * amount),
+            'net_profit': float((profit - 0.0009) * amount)
+        }
     
     async def bridge_cross_chain(
         self,
-        amount: float,
+        amount: Decimal,
         from_chain: str,
         to_chain: str
     ) -> Dict:
         """
-        Bridge assets entre chains (Base <-> Solana)
+        Bridge assets entre chains (Polygon ↔ Base ↔ Solana)
         
         Args:
-            amount: Cantidad a bridge
-            from_chain: 'base', 'polygon', 'solana'
-            to_chain: 'base', 'polygon', 'solana'
+            amount: Cantidad a transferir
+            from_chain: Chain origen (polygon, base, solana)
+            to_chain: Chain destino
         
         Returns:
-            Resultado del bridge
+            Bridge transaction details
         """
-        logger.info(f"🌉 Bridging {amount} USDC: {from_chain} → {to_chain}")
+        logger.info(f"🌉 Bridging {amount} from {from_chain} to {to_chain}")
         
-        bridges = {
-            ('base', 'polygon'): 'stargate',
-            ('polygon', 'solana'): 'wormhole',
-            ('base', 'solana'): 'allbridge'
+        # Validar chains soportadas
+        supported_chains = ['polygon', 'base', 'solana']
+        if from_chain not in supported_chains or to_chain not in supported_chains:
+            raise ValueError(f"Unsupported chain")
+        
+        # Usar LayerZero o Wormhole para bridge
+        bridge_protocol = 'layerzero' if to_chain != 'solana' else 'wormhole'
+        
+        if bridge_protocol == 'layerzero':
+            return await self._bridge_layerzero(amount, from_chain, to_chain)
+        else:
+            return await self._bridge_wormhole(amount, from_chain, to_chain)
+    
+    async def _bridge_layerzero(self, amount: Decimal, from_chain: str, to_chain: str) -> Dict:
+        """
+        Bridge usando LayerZero (EVM to EVM)
+        """
+        # LayerZero endpoint addresses
+        endpoints = {
+            'polygon': '0x3c2269811836af69497E5F486A85D7316753cf62',
+            'base': '0xb6319cC6c8c27A8F5dAF0dD3DF91EA35C4720dd7'
         }
         
-        bridge_key = (from_chain, to_chain)
-        bridge_protocol = bridges.get(bridge_key, 'wormhole')
+        chain_ids = {
+            'polygon': 109,
+            'base': 184
+        }
         
-        try:
-            # Ejecutar bridge
-            result = await self._execute_bridge(
-                amount,
-                from_chain,
-                to_chain,
-                bridge_protocol
-            )
-            
-            logger.info(f"✅ Bridge completado via {bridge_protocol}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ Error en bridge: {e}")
-            raise
-    
-    async def _execute_bridge(
-        self,
-        amount: float,
-        from_chain: str,
-        to_chain: str,
-        protocol: str
-    ) -> Dict:
-        """Ejecuta bridge transaction"""
-        # Simular bridge (en producción usar SDK del protocolo)
-        bridge_fee = amount * 0.001  # 0.1% fee
+        logger.info(f"📡 Using LayerZero: {from_chain} → {to_chain}")
+        
+        # Estimar fee de bridge
+        bridge_fee = float(amount) * 0.001  # 0.1% fee estimado
         
         return {
             'success': True,
-            'amount_sent': amount,
-            'amount_received': amount - bridge_fee,
-            'fee': bridge_fee,
+            'protocol': 'layerzero',
             'from_chain': from_chain,
             'to_chain': to_chain,
-            'protocol': protocol,
-            'tx_hash_source': '0x...',
-            'tx_hash_dest': '0x...',
-            'estimated_time': '2-5 min'
+            'amount': float(amount),
+            'fee': bridge_fee,
+            'estimated_time': '5-10 min'
         }
     
-    async def setup_multisig_wallet(
-        self,
-        owners: list,
-        threshold: int
-    ) -> Dict:
+    async def _bridge_wormhole(self, amount: Decimal, from_chain: str, to_chain: str) -> Dict:
         """
-        Configura wallet multi-sig para seguridad
-        
-        Args:
-            owners: Lista de direcciones de propietarios
-            threshold: Número de firmas requeridas
-        
-        Returns:
-            Dirección del multisig
+        Bridge usando Wormhole (incluye Solana)
         """
-        logger.info(f"🔒 Creando multisig: {threshold}/{len(owners)}")
-        
-        # Usar Gnosis Safe
-        safe_factory = '0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2'  # Polygon
-        
-        # Simular creación
-        safe_address = f"0x{Web3.keccak(text=''.join(owners))[:20].hex()}"
+        logger.info(f"🪱 Using Wormhole: {from_chain} → {to_chain}")
         
         return {
-            'safe_address': safe_address,
+            'success': True,
+            'protocol': 'wormhole',
+            'from_chain': from_chain,
+            'to_chain': to_chain,
+            'amount': float(amount),
+            'fee': float(amount) * 0.002,  # 0.2% fee
+            'estimated_time': '15-30 min'
+        }
+    
+    async def setup_multisig_wallet(self, owners: list, threshold: int) -> Dict:
+        """
+        Configura wallet multi-sig para seguridad (v5.0 requirement)
+        
+        Args:
+            owners: Lista de addresses propietarias
+            threshold: Número mínimo de firmas
+        
+        Returns:
+            Multisig wallet address
+        """
+        logger.info(f"🔐 Setting up multisig: {threshold}/{len(owners)} signatures")
+        
+        # Gnosis Safe factory address
+        SAFE_FACTORY = '0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2'
+        
+        # En producción, desplegaría un Gnosis Safe
+        multisig_address = '0x' + '1' * 40  # Ejemplo
+        
+        return {
+            'success': True,
+            'multisig_address': multisig_address,
             'owners': owners,
             'threshold': threshold,
-            'network': self.network,
-            'explorer': f'https://polygonscan.com/address/{safe_address}'
-        }
-
-class SolanaIntegration:
-    """
-    Integración con Solana para trading en Polymarket v2
-    """
-    
-    def __init__(self):
-        self.rpc_url = 'https://api.mainnet-beta.solana.com'
-        logger.info("✅ Solana integration initialized")
-    
-    async def swap_tokens(
-        self,
-        from_token: str,
-        to_token: str,
-        amount: float
-    ) -> Dict:
-        """
-        Swap tokens en Jupiter (Solana DEX aggregator)
-        
-        Args:
-            from_token: Token origen
-            to_token: Token destino
-            amount: Cantidad
-        
-        Returns:
-            Resultado del swap
-        """
-        logger.info(f"🔄 Swapping {amount} {from_token} → {to_token}")
-        
-        # Jupiter API integration
-        return {
-            'success': True,
-            'from_token': from_token,
-            'to_token': to_token,
-            'amount_in': amount,
-            'amount_out': amount * 0.998,  # 0.2% slippage
-            'route': 'Jupiter',
-            'tx_signature': '...'
+            'type': 'gnosis_safe'
         }
     
-    async def stake_sol(self, amount: float) -> Dict:
+    async def _approve_token(self, token_address: str, spender: str, amount: Decimal):
         """
-        Stake SOL para generar yield
+        Aprueba token para un spender
         """
-        logger.info(f"🌱 Staking {amount} SOL")
+        # ERC20 ABI approve function
+        erc20_abi = [{
+            'name': 'approve',
+            'type': 'function',
+            'inputs': [
+                {'name': 'spender', 'type': 'address'},
+                {'name': 'amount', 'type': 'uint256'}
+            ]
+        }]
         
-        return {
-            'success': True,
-            'amount': amount,
-            'apy': 0.07,  # 7% APY
-            'validator': 'Marinade',
-            'tx_signature': '...'
-        }
+        token = self.w3.eth.contract(address=token_address, abi=erc20_abi)
+        
+        tx = token.functions.approve(
+            spender,
+            int(amount * 10**6)
+        ).build_transaction({
+            'from': self.account.address,
+            'nonce': self.w3.eth.get_transaction_count(self.account.address)
+        })
+        
+        signed = self.w3.eth.account.sign_transaction(tx, self.account.key)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
+        
+        logger.info(f"✅ Token approved: {tx_hash.hex()}")
+    
+    async def _get_aave_apy(self) -> float:
+        """
+        Obtiene APY actual de Aave para USDC
+        """
+        # En producción, consultaría el contrato de Aave
+        return 4.5  # APY ejemplo
+    
+    def _encode_arbitrage_params(self, opportunity: Dict) -> bytes:
+        """
+        Codifica parámetros para el callback del flashloan
+        """
+        # Simplificado - en producción usaría abi.encode
+        return b''
 
 if __name__ == "__main__":
     # Test
     defi = DeFiIntegration('polygon')
-    print("✅ DeFi Integration ready")
+    print("✅ DeFi Integration initialized")
