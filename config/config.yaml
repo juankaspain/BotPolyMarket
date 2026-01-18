@@ -1,0 +1,107 @@
+# BotPolyMarket - Master Configuration
+# Updated: 18 Enero 2026 - FASE 1 Optimizations Integrated
+
+# === TRADING SETTINGS ===
+trading:
+  mode: paper  # 'paper' or 'live'
+  initial_capital: 10000  # USD
+  max_concurrent_positions: 10
+  scan_interval: 60  # seconds
+
+# === KELLY CRITERION (FASE 1) ===
+kelly:
+  enabled: true
+  fraction: 0.5  # Half Kelly (recommended)
+  max_position_pct: 0.10  # Max 10% per trade
+  min_position_usd: 10
+  max_position_usd: 1000
+  adaptive: true  # Auto-adjust based on performance
+
+# === GAP STRATEGIES (OPTIMIZED - FASE 1) ===
+gap_strategies:
+  # Global settings
+  enabled: true
+  min_gap_size: 0.015  # 1.5% (optimized from 2%)
+  min_confidence: 60
+  min_volume_multiplier: 1.5  # (optimized from 2.0)
+  
+  # Individual strategies
+  fair_value_gap:
+    enabled: true
+    threshold: 0.015
+    
+  cross_market_arbitrage:
+    enabled: true
+    threshold: 0.03  # 3% (optimized from 5%)
+    include_fees: true
+    
+  btc_lag:
+    enabled: true
+    threshold: 0.008  # 0.8% (optimized from 1%)
+    timeframe: 5  # minutes
+    
+  opening_gap:
+    enabled: true
+    threshold: 0.015
+    
+  exhaustion_gap:
+    enabled: true
+    use_rsi: true
+    
+  runaway_continuation:
+    enabled: true
+    
+  volume_confirmation:
+    enabled: true
+    
+  correlation_gap:
+    enabled: true
+    
+  news_catalyst:
+    enabled: false  # Requires NewsAPI
+    
+  multi_choice_arbitrage:
+    enabled: true
+
+# === API CONFIGURATION ===
+apis:
+  polymarket:
+    rest_url: "https://clob.polymarket.com"
+    ws_url: "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    gamma_url: "https://gamma-api.polymarket.com"
+    chain_id: 137  # Polygon
+    
+  binance:
+    enabled: true
+    use_testnet: false
+    
+  kalshi:
+    enabled: true
+    base_url: "https://api.elections.kalshi.com/trade-api/v2"
+
+# === WEBSOCKETS (FASE 1) ===
+websockets:
+  enabled: true
+  max_connections: 50
+  reconnect_delay: 5
+  ping_interval: 30
+
+# === RISK MANAGEMENT ===
+risk:
+  max_drawdown_pct: 0.20
+  max_daily_loss_pct: 0.05
+  stop_loss_enabled: true
+  correlation_limit: 0.7
+
+# === MONITORING ===
+monitoring:
+  log_level: INFO
+  telegram_enabled: true
+  save_trades: true
+  trades_csv_path: "data/trades/"
+
+# === BACKTESTING ===
+backtest:
+  enabled: false
+  start_date: "2025-12-18"
+  end_date: "2026-01-18"

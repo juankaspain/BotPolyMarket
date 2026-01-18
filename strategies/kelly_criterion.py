@@ -1,164 +1,229 @@
-#!/usr/bin/env python3
-"""
-v3.0 - Kelly Criterion Position Sizing
-Implementa Kelly Criterion para optimal position sizing
+"""Kelly Criterion - Enhanced with Auto-Sizing
+
+Integrates:
+- Original Kelly Criterion implementation
+- Auto position sizing (FASE 1)
+- Adaptive Kelly based on performance
+- Risk management
+
+Autor: juankaspain
+Updated: 18 Enero 2026 - FASE 1 Integration
 """
 
-import numpy as np
-from typing import Optional
 import logging
+from typing import Tuple, Optional
+from dataclasses import dataclass
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-class KellyCriterion:
-    """
-    Kelly Criterion para calcular tamaño óptimo de posición
-    
-    Formula: f* = (bp - q) / b
-    Donde:
-    - f* = fracción del capital a apostar
-    - b = odds recibidas (decimal - 1)
-    - p = probabilidad de ganar
-    - q = probabilidad de perder (1 - p)
-    """
-    
-    def __init__(self, fraction: float = 0.25, max_bet: float = 0.10):
-        """
-        Args:
-            fraction: Fracción de Kelly a usar (0.25 = Quarter Kelly)
-            max_bet: Máximo % del portfolio a arriesgar
-        """
-        self.fraction = fraction
-        self.max_bet = max_bet
-        
-    def calculate_full_kelly(self, win_prob: float, odds: float) -> float:
-        """
-        Calcula Full Kelly
-        
-        Args:
-            win_prob: Probabilidad de ganar (0-1)
-            odds: Odds decimales (ej: 2.0 para even money)
-        
-        Returns:
-            Fracción del capital a apostar (0-1)
-        """
-        if win_prob <= 0 or win_prob >= 1:
-            return 0.0
-        
-        if odds <= 1:
-            return 0.0
-        
-        # b = net odds
-        b = odds - 1
-        
-        # q = probabilidad de perder
-        q = 1 - win_prob
-        
-        # Kelly formula: (bp - q) / b
-        kelly = (b * win_prob - q) / b
-        
-        # No apostar si Kelly es negativo (no hay edge)
-        return max(0.0, kelly)
-    
-    def calculate_fractional_kelly(self, win_prob: float, odds: float) -> float:
-        """
-        Calcula Fractional Kelly (más conservador)
-        
-        Returns:
-            Fracción del capital a apostar
-        """
-        full_kelly = self.calculate_full_kelly(win_prob, odds)
-        fractional = full_kelly * self.fraction
-        
-        # Aplicar límite máximo
-        return min(fractional, self.max_bet)
-    
-    def calculate_position_size(
-        self,
-        capital: float,
-        win_prob: float,
-        odds: float,
-        min_edge: float = 0.02
-    ) -> float:
-        """
-        Calcula tamaño de posición en dólares
-        
-        Args:
-            capital: Capital total disponible
-            win_prob: Probabilidad de ganar
-            odds: Odds decimales
-            min_edge: Edge mínimo requerido
-        
-        Returns:
-            Tamaño de posición en $
-        """
-        # Calcular edge
-        expected_value = (win_prob * (odds - 1)) - (1 - win_prob)
-        
-        # Si no hay edge suficiente, no apostar
-        if expected_value < min_edge:
-            logger.info(f"Edge insuficiente: {expected_value:.3f} < {min_edge}")
-            return 0.0
-        
-        # Calcular Kelly fraction
-        kelly_fraction = self.calculate_fractional_kelly(win_prob, odds)
-        
-        if kelly_fraction <= 0:
-            return 0.0
-        
-        position_size = capital * kelly_fraction
-        
-        logger.info(f"""
-        Kelly Sizing:
-        - Win Prob: {win_prob:.2%}
-        - Odds: {odds:.2f}
-        - Edge: {expected_value:.2%}
-        - Kelly%: {kelly_fraction:.2%}
-        - Position: ${position_size:.2f}
-        """)
-        
-        return position_size
-    
-    def calculate_multi_bet_allocation(
-        self,
-        capital: float,
-        opportunities: list
-    ) -> dict:
-        """
-        Calcula allocación para múltiples apuestas simultáneas
-        
-        Args:
-            capital: Capital total
-            opportunities: Lista de {win_prob, odds, market_id}
-        
-        Returns:
-            Dict con allocación por market_id
-        """
-        allocations = {}
-        total_allocated = 0
-        
-        for opp in opportunities:
-            size = self.calculate_position_size(
-                capital - total_allocated,
-                opp['win_prob'],
-                opp['odds']
-            )
-            
-            if size > 0:
-                allocations[opp['market_id']] = size
-                total_allocated += size
-        
-        return allocations
 
-if __name__ == "__main__":
-    # Test
-    kelly = KellyCriterion(fraction=0.25, max_bet=0.10)
+@dataclass
+class KellyResult:
+    """Kelly calculation result"""
+    full_kelly: float
+    half_kelly: float
+    quarter_kelly: float
+    recommended: float
+    position_size_usd: float
+    risk_pct: float
+
+
+class KellyCriterion:
+    """Kelly Criterion for optimal position sizing
     
-    # Ejemplo: 60% prob de ganar, 2.0 odds, 1000$ capital
-    size = kelly.calculate_position_size(
-        capital=1000,
-        win_prob=0.60,
-        odds=2.0
-    )
+    Formula: f* = (p * b - q) / b
+    Where:
+        f* = Kelly fraction
+        p = win probability
+        q = loss probability (1-p)
+        b = win/loss ratio
+    """
     
-    print(f"Position size: ${size:.2f}")
+    def __init__(self, 
+                 bankroll: float,
+                 kelly_fraction: float = 0.5,
+                 max_position_pct: float = 0.10,
+                 min_position_usd: float = 10.0,
+                 max_position_usd: float = 1000.0):
+        """
+        Args:
+            bankroll: Total capital
+            kelly_fraction: Fraction of Kelly to use (0.5 = Half Kelly)
+            max_position_pct: Max % of bankroll per position
+            min_position_usd: Minimum position size
+            max_position_usd: Maximum position size
+        """
+        self.bankroll = bankroll
+        self.kelly_fraction = kelly_fraction
+        self.max_position_pct = max_position_pct
+        self.min_position_usd = min_position_usd
+        self.max_position_usd = max_position_usd
+        
+        # Performance tracking
+        self.trades = []
+        self.win_streak = 0
+        self.loss_streak = 0
+        
+        logger.info(f"Kelly Criterion initialized: ${bankroll:,.2f} bankroll, {kelly_fraction} fraction")
+    
+    def calculate_fraction(self, 
+                          win_probability: float,
+                          win_return: float,
+                          loss_return: float = 1.0) -> float:
+        """Calculate Kelly fraction
+        
+        Args:
+            win_probability: Probability of winning (0-1)
+            win_return: Return multiplier if win
+            loss_return: Loss multiplier if lose (default 1.0)
+            
+        Returns:
+            Kelly fraction (0-1)
+        """
+        p = win_probability
+        q = 1 - p
+        b = win_return / loss_return
+        
+        kelly = (p * b - q) / b
+        
+        return max(0, kelly)
+    
+    def calculate_position_size(self,
+                               win_probability: float,
+                               risk_reward_ratio: float,
+                               confidence: float = 1.0) -> KellyResult:
+        """Calculate optimal position size
+        
+        Args:
+            win_probability: Expected win rate (0-1 or 0-100)
+            risk_reward_ratio: R:R ratio
+            confidence: Confidence multiplier (0-1)
+            
+        Returns:
+            KellyResult object
+        """
+        # Normalize
+        if win_probability > 1:
+            win_probability = win_probability / 100
+        if confidence > 1:
+            confidence = confidence / 100
+        
+        # Calculate Kelly
+        full_kelly = self.calculate_fraction(
+            win_probability=win_probability,
+            win_return=risk_reward_ratio
+        )
+        
+        half_kelly = full_kelly * 0.5
+        quarter_kelly = full_kelly * 0.25
+        
+        # Recommended
+        recommended = full_kelly * self.kelly_fraction * confidence
+        recommended = min(recommended, self.max_position_pct)
+        
+        # Position size
+        position_size = recommended * self.bankroll
+        position_size = max(self.min_position_usd, position_size)
+        position_size = min(self.max_position_usd, position_size)
+        
+        risk_pct = (position_size / self.bankroll) * 100
+        
+        return KellyResult(
+            full_kelly=full_kelly,
+            half_kelly=half_kelly,
+            quarter_kelly=quarter_kelly,
+            recommended=recommended,
+            position_size_usd=position_size,
+            risk_pct=risk_pct
+        )
+    
+    def should_take_trade(self, 
+                         win_rate: float,
+                         risk_reward: float,
+                         confidence: float = 70) -> Tuple[bool, str]:
+        """Determine if trade should be taken
+        
+        Returns:
+            (should_take, reason)
+        """
+        result = self.calculate_position_size(win_rate, risk_reward, confidence)
+        
+        if result.full_kelly <= 0:
+            return False, "Negative expectancy"
+        
+        if result.position_size_usd < self.min_position_usd:
+            return False, f"Position too small (${result.position_size_usd:.2f})"
+        
+        if confidence < 60:
+            return False, f"Confidence too low ({confidence}%)"
+        
+        return True, f"Approved: ${result.position_size_usd:.2f} ({result.risk_pct:.2f}% risk)"
+    
+    def record_trade(self, won: bool, profit_loss: float):
+        """Record trade result for adaptive Kelly"""
+        self.trades.append({
+            'won': won,
+            'pnl': profit_loss,
+            'timestamp': datetime.now().timestamp()
+        })
+        
+        if won:
+            self.win_streak += 1
+            self.loss_streak = 0
+        else:
+            self.loss_streak += 1
+            self.win_streak = 0
+        
+        self.update_bankroll(self.bankroll + profit_loss)
+        self._adapt_kelly_fraction()
+    
+    def _adapt_kelly_fraction(self):
+        """Adapt Kelly fraction based on recent performance"""
+        if len(self.trades) < 10:
+            return
+        
+        recent = self.trades[-20:]
+        recent_wr = sum(1 for t in recent if t['won']) / len(recent)
+        
+        if recent_wr > 0.70:
+            self.kelly_fraction = min(0.6, self.kelly_fraction * 1.1)
+            logger.info(f"⬆️ Kelly fraction increased to {self.kelly_fraction:.2f}")
+        elif recent_wr < 0.50:
+            self.kelly_fraction = max(0.25, self.kelly_fraction * 0.9)
+            logger.warning(f"⬇️ Kelly fraction decreased to {self.kelly_fraction:.2f}")
+    
+    def update_bankroll(self, new_bankroll: float):
+        """Update bankroll after profit/loss"""
+        old = self.bankroll
+        self.bankroll = new_bankroll
+        change = ((new_bankroll - old) / old) * 100
+        logger.info(f"Bankroll: ${old:,.2f} → ${new_bankroll:,.2f} ({change:+.2f}%)")
+    
+    def get_statistics(self) -> dict:
+        """Get performance statistics"""
+        if not self.trades:
+            return {}
+        
+        total = len(self.trades)
+        wins = sum(1 for t in self.trades if t['won'])
+        losses = total - wins
+        
+        total_profit = sum(t['pnl'] for t in self.trades if t['pnl'] > 0)
+        total_loss = abs(sum(t['pnl'] for t in self.trades if t['pnl'] < 0))
+        net = sum(t['pnl'] for t in self.trades)
+        
+        return {
+            'total_trades': total,
+            'wins': wins,
+            'losses': losses,
+            'win_rate': wins / total,
+            'total_profit': total_profit,
+            'total_loss': total_loss,
+            'net_profit': net,
+            'profit_factor': total_profit / total_loss if total_loss > 0 else 0,
+            'avg_win': total_profit / wins if wins > 0 else 0,
+            'avg_loss': total_loss / losses if losses > 0 else 0,
+            'streak': self.win_streak if self.win_streak > 0 else -self.loss_streak,
+            'kelly_fraction': self.kelly_fraction
+        }
