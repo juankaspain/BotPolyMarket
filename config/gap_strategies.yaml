@@ -1,0 +1,348 @@
+# 🔥 GAP STRATEGIES CONFIGURATION
+# ================================
+#
+# Configuration for the 15 elite GAP strategies system
+#
+# Author: Juan Carlos Garcia Arriero (juankaspain)
+# Version: 8.0 COMPLETE
+# Date: 19 January 2026
+
+# =============================================================================
+# GENERAL SETTINGS
+# =============================================================================
+
+general:
+  # Trading mode: paper, live, backtest
+  mode: paper
+  
+  # Initial capital (USD)
+  capital: 10000
+  
+  # Scan interval (seconds)
+  polling_interval: 30
+  
+  # Enable detailed logging
+  verbose_logging: true
+
+# =============================================================================
+# STRATEGY THRESHOLDS
+# =============================================================================
+
+thresholds:
+  # Minimum gap size (percentage, 0.012 = 1.2%)
+  min_gap_size: 0.012
+  
+  # Minimum confidence (percentage, 60.0 = 60%)
+  min_confidence: 60.0
+  
+  # Minimum volume multiplier (1.5 = 1.5x average volume)
+  min_volume_mult: 1.5
+  
+  # BTC lag threshold (0.008 = 0.8%)
+  btc_lag_threshold: 0.008
+  
+  # Arbitrage threshold (0.03 = 3%)
+  arbitrage_threshold: 0.03
+  
+  # Correlation threshold (0.7 = 70%)
+  correlation_threshold: 0.7
+
+# =============================================================================
+# POSITION SIZING (KELLY CRITERION)
+# =============================================================================
+
+position_sizing:
+  # Enable Kelly Criterion
+  enable_kelly: true
+  
+  # Kelly fraction (0.5 = Half Kelly, 0.25 = Quarter Kelly, 1.0 = Full Kelly)
+  # Recommended: 0.25-0.5 for safer trading
+  kelly_fraction: 0.5
+  
+  # Maximum position size (percentage of bankroll)
+  # 0.10 = 10% max per trade
+  max_position_pct: 0.10
+  
+  # Maximum total exposure (percentage of bankroll)
+  # 0.60 = 60% max total exposure across all positions
+  max_total_exposure: 0.60
+
+# =============================================================================
+# RISK MANAGEMENT
+# =============================================================================
+
+risk_management:
+  # Maximum drawdown before auto-pause (percentage)
+  # 0.15 = 15% max drawdown
+  max_drawdown_pct: 0.15
+  
+  # Stop loss ATR multiplier
+  # 1.5 = Stop loss at 1.5x ATR below entry
+  stop_loss_atr_mult: 1.5
+  
+  # Take profit multiplier (risk:reward ratio)
+  # 3.0 = Take profit at 3x the risk
+  take_profit_mult: 3.0
+  
+  # Enable dynamic position sizing based on volatility
+  dynamic_sizing: true
+  
+  # Enable trailing stops
+  trailing_stops: false
+
+# =============================================================================
+# MULTI-TIMEFRAME ANALYSIS
+# =============================================================================
+
+multi_timeframe:
+  # Timeframes to analyze (15m, 30m, 1h, 4h, 1d)
+  timeframes:
+    - "15m"
+    - "1h"
+    - "4h"
+  
+  # Minimum timeframe confirmations required
+  min_confirmations: 2
+
+# =============================================================================
+# MACHINE LEARNING FEATURES
+# =============================================================================
+
+machine_learning:
+  # Enable ML predictions
+  enabled: true
+  
+  # ML features to use
+  features:
+    - gap_size
+    - volume_ratio
+    - rsi
+    - macd
+    - trend_strength
+    - btc_correlation
+    - sentiment_score
+    - time_of_day
+  
+  # Model type: random_forest, gradient_boosting, neural_network
+  model_type: random_forest
+  
+  # Retrain interval (hours, 0 = never retrain automatically)
+  retrain_interval: 24
+
+# =============================================================================
+# NLP SENTIMENT ANALYSIS
+# =============================================================================
+
+sentiment_analysis:
+  # Enable NLP sentiment analysis
+  enabled: true
+  
+  # News sources to monitor
+  news_sources:
+    - reuters
+    - bloomberg
+    - coindesk
+    - cointelegraph
+    - twitter
+  
+  # Source credibility weights (0.0-1.0)
+  source_weights:
+    reuters: 1.0
+    bloomberg: 1.0
+    wsj: 0.9
+    cnbc: 0.8
+    coindesk: 0.7
+    twitter: 0.5
+    reddit: 0.4
+  
+  # Minimum sentiment threshold (absolute value)
+  min_sentiment: 0.3
+  
+  # News lookback period (hours)
+  lookback_hours: 3
+
+# =============================================================================
+# API SETTINGS
+# =============================================================================
+
+api:
+  # API request timeout (seconds)
+  timeout: 5.0
+  
+  # Enable WebSocket connections for real-time data
+  websocket_enabled: true
+  
+  # Target latency (milliseconds)
+  target_latency_ms: 50.0
+  
+  # Max retries for failed API calls
+  max_retries: 3
+  
+  # Retry backoff multiplier
+  retry_backoff: 2.0
+
+# =============================================================================
+# MARKET SELECTION
+# =============================================================================
+
+markets:
+  # Markets to scan (customize for your needs)
+  active_markets:
+    - token_id: "btc_100k_token"
+      slug: "bitcoin-100k-by-march-2026"
+      keywords:
+        - bitcoin
+        - btc
+        - "100k"
+        - cryptocurrency
+      correlated:
+        - eth_token
+        - crypto_market_token
+    
+    - token_id: "eth_5k_token"
+      slug: "ethereum-5k-2026"
+      keywords:
+        - ethereum
+        - eth
+        - "5k"
+      correlated:
+        - btc_token
+    
+    - token_id: "trump_2024"
+      slug: "trump-wins-2024"
+      keywords:
+        - trump
+        - election
+        - "2024"
+        - president
+      correlated: []
+  
+  # Auto-discover new markets
+  auto_discover: false
+  
+  # Market filters
+  filters:
+    min_volume_24h: 10000  # $10k minimum 24h volume
+    min_liquidity: 5000     # $5k minimum liquidity
+    max_markets: 10         # Maximum markets to scan simultaneously
+
+# =============================================================================
+# STRATEGY-SPECIFIC SETTINGS
+# =============================================================================
+
+strategy_specific:
+  # Strategy 7: BTC Lag Predictive
+  btc_lag:
+    min_btc_sources: 3
+    max_variance: 0.02  # 2%
+    min_lag: 0.03       # 3%
+  
+  # Strategy 9 & 15: News-based
+  news_based:
+    min_sources: 3
+    max_age_hours: 3
+    require_high_impact: false
+  
+  # Strategy 10: Multi-Choice Arbitrage
+  multi_choice:
+    min_profit_pct: 0.01  # 1% minimum guaranteed profit
+    max_options: 10
+  
+  # Strategy 2 & 13: Cross-Exchange
+  cross_exchange:
+    min_net_profit: 0.01  # 1% after fees
+    max_execution_time: 60  # seconds
+
+# =============================================================================
+# MONITORING & ALERTS
+# =============================================================================
+
+monitoring:
+  # Enable real-time dashboard
+  dashboard_enabled: false
+  
+  # Dashboard update interval (seconds)
+  dashboard_interval: 5
+  
+  # Enable email alerts
+  email_alerts: false
+  
+  # Enable Telegram alerts
+  telegram_alerts: false
+  
+  # Alert on signal confidence above
+  alert_confidence_threshold: 75.0
+  
+  # Alert on position size above (USD)
+  alert_position_threshold: 1000.0
+
+# =============================================================================
+# BACKTESTING
+# =============================================================================
+
+backtesting:
+  # Enable backtesting mode
+  enabled: false
+  
+  # Start date (YYYY-MM-DD)
+  start_date: "2024-01-01"
+  
+  # End date (YYYY-MM-DD)
+  end_date: "2024-12-31"
+  
+  # Commission rate
+  commission: 0.02  # 2%
+  
+  # Slippage model: fixed, percentage
+  slippage_model: percentage
+  slippage_value: 0.001  # 0.1%
+
+# =============================================================================
+# ADVANCED SETTINGS
+# =============================================================================
+
+advanced:
+  # Enable experimental features
+  experimental_features: false
+  
+  # Cache API responses (reduces API calls)
+  cache_enabled: true
+  cache_ttl: 60  # seconds
+  
+  # Database settings
+  database:
+    enabled: false
+    path: "data/trades.db"
+  
+  # Performance optimization
+  optimization:
+    parallel_execution: true
+    max_workers: 4
+    use_uvloop: false  # Advanced: faster asyncio loop
+
+# =============================================================================
+# RISK PROFILES (PRESETS)
+# =============================================================================
+
+risk_profiles:
+  conservative:
+    kelly_fraction: 0.25
+    max_position_pct: 0.05
+    max_total_exposure: 0.30
+    min_confidence: 70.0
+  
+  balanced:
+    kelly_fraction: 0.5
+    max_position_pct: 0.10
+    max_total_exposure: 0.60
+    min_confidence: 60.0
+  
+  aggressive:
+    kelly_fraction: 0.75
+    max_position_pct: 0.15
+    max_total_exposure: 0.80
+    min_confidence: 55.0
+
+# =============================================================================
+# END OF CONFIGURATION
+# =============================================================================
